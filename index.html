@@ -59,7 +59,42 @@ function go(id){screens.forEach(s=>document.getElementById(s).classList.toggle('
 function choose(key,val,el){state[key]=val;el.parentElement.querySelectorAll('.option').forEach(x=>x.classList.remove('selected'));el.classList.add('selected');if(key==='goal')document.getElementById('targetWrap').classList.toggle('hidden',!val.toLowerCase().includes('похудеть'))}
 function saveAndGo(field,next){let v=Number(document.getElementById(field+'Input').value);if(!v||v<=0){alert('Введи корректное значение');return}state[field]=v;if(field==='weight')state.initialWeight=v;go(next)}
 function saveMeasurements(){['waist','hips','chest'].forEach(k=>{let v=Number(document.getElementById(k+'Input').value);state[k]=v||null})}
-function finishSetup(){if(!state.goal){alert('Выбери цель, чтобы продолжить');return}state.target=Number(document.getElementById('targetInput').value)||null;state.setup=true;state.measurements.push({date:new Date().toISOString(),weight:state.weight,waist:state.waist,hips:state.hips,chest:state.chest});go('start')}
+async function finishSetup() {
+  if (!state.goal) {
+    alert('Выбери цель, чтобы продолжить');
+    return;
+  }
+
+  if (!state.weight || state.weight <= 0) {
+    alert('Сначала укажи свой текущий вес');
+    go('weight');
+    return;
+  }
+
+  state.initialWeight = state.weight;
+  state.target = Number(document.getElementById('targetInput').value) || null;
+  state.setup = true;
+
+  state.measurements.push({
+    date: new Date().toISOString(),
+    weight: state.weight,
+    waist: state.waist,
+    hips: state.hips,
+    chest: state.chest
+  });
+
+  if (window.Telegram?.WebApp?.initData) {
+    try {
+      await saveProfileToApi();
+    } catch (error) {
+      console.error(error);
+      alert('Не удалось сохранить профиль. Проверь соединение и попробуй ещё раз.');
+      return;
+    }
+  }
+
+  go('start');
+}
 function renderStart(){document.getElementById('startData').innerHTML=`<div class="metric"><span>Рост</span><b>${state.height} см</b></div><div class="metric"><span>Вес</span><b>${fmt(state.weight)} кг</b></div>${state.waist?`<div class="metric"><span>Талия</span><b>${state.waist} см</b></div>`:''}`}
 function fmt(n){return n==null?'—':Number(n).toLocaleString('ru-RU',{maximumFractionDigits:1})}
 function previewPhoto(e){const f=e.target.files[0],img=document.getElementById('photoPreview');if(!f)return;img.src=URL.createObjectURL(f);img.style.display='block';document.getElementById('uploadStatus').textContent='Фото выбрано. В этом прототипе AI-анализ имитируется демонстрационным результатом.'}
