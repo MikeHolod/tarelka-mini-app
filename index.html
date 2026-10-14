@@ -250,13 +250,15 @@ async function connectTelegram() {
     if (!response.ok) {
       throw new Error(`Ошибка авторизации: ${response.status}`);
     }
-    const result = await response.json();
-    window.tarelkaTelegram = {
-      await loadProfileFromApi();
-      initData: tg.initData,
-      user: tg.initDataUnsafe?.user || null,
-      userId: result.user_id
-    };
+const result = await response.json();
+
+window.tarelkaTelegram = {
+  initData: tg.initData,
+  user: tg.initDataUnsafe?.user || null,
+  userId: result.user_id
+};
+
+await loadProfileFromApi();
 
     const user = window.tarelkaTelegram.user;
     if (user?.first_name) {
