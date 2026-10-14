@@ -62,6 +62,38 @@ function go(id){screens.forEach(s=>document.getElementById(s).classList.toggle('
 function choose(key,val,el){state[key]=val;el.parentElement.querySelectorAll('.option').forEach(x=>x.classList.remove('selected'));el.classList.add('selected');if(key==='goal')document.getElementById('targetWrap').classList.toggle('hidden',!val.toLowerCase().includes('похудеть'))}
 function saveAndGo(field,next){let v=Number(document.getElementById(field+'Input').value);if(!v||v<=0){alert('Введи корректное значение');return}state[field]=v;if(field==='weight')state.initialWeight=v;go(next)}
 function saveMeasurements(){['waist','hips','chest'].forEach(k=>{let v=Number(document.getElementById(k+'Input').value);state[k]=v||null})}
+async function saveProfileToApi() {
+  const tg = window.Telegram?.WebApp;
+
+  if (!tg?.initData) {
+    throw new Error('Открой приложение через Telegram');
+  }
+
+  const response = await fetch(`${API_URL}/api/profile`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Telegram-Init-Data': tg.initData
+    },
+    body: JSON.stringify({
+      gender: state.gender || null,
+      height_cm: state.height,
+      initial_weight_kg: state.initialWeight,
+      current_weight_kg: state.weight,
+      goal: state.goal || null,
+      target_weight_kg: state.target,
+      waist_cm: state.waist,
+      hips_cm: state.hips,
+      chest_cm: state.chest
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`Не удалось сохранить данные: ${response.status}`);
+  }
+
+  return response.json();
+}
 async function finishSetup() {
   if (!state.goal) {
     alert('Выбери цель, чтобы продолжить');
