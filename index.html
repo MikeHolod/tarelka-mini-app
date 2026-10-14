@@ -140,7 +140,7 @@ ${e.corrected?'Спасибо за уточнение — в реальном п
 function correctEntry(id){const e=state.entries.find(x=>x.id===id);const correction=prompt('Что я не распознал или распознал неправильно?');if(!correction||!correction.trim())return;e.description+=' · Уточнение пользователя: '+correction.trim();e.corrected=true;e.score=Math.max(1,Math.min(10,e.score));renderAnalysis(e)}
 function renderProgress(){document.getElementById('progressWeight').innerHTML=fmt(state.weight)+' <small>кг</small>';let diff=state.weight-state.initialWeight;document.getElementById('weightChange').textContent=diff===0?'Точка старта':(diff<0?'С начала: −'+fmt(Math.abs(diff))+' кг':'С начала: +'+fmt(diff)+' кг');document.getElementById('weightBar').style.width=Math.min(100,Math.max(8,100-(state.weight/(state.initialWeight||1))*50))+'%';document.getElementById('photoCount').textContent=state.entries.filter(e=>e.photo).length;document.getElementById('entryCount').textContent=state.entries.length;document.getElementById('progressMeasurements').innerHTML=['waist','hips','chest'].map((k,i)=>`<div class="metric"><span>${['Талия','Бёдра','Грудь'][i]}</span><b>${state[k]?state[k]+' см':'Не указано'}</b></div>`).join('')}
 function renderProfile(){document.getElementById('pGender').textContent=state.gender||'—';document.getElementById('pHeight').textContent=state.height+' см';document.getElementById('pInitialWeight').textContent=fmt(state.initialWeight)+' кг';document.getElementById('pCurrentWeight').textContent=fmt(state.weight)+' кг';['waist','hips','chest'].forEach(k=>document.getElementById('p'+k[0].toUpperCase()+k.slice(1)).textContent=state[k]?state[k]+' см':'—');document.getElementById('pGoal').textContent=state.goal||'Пока не выбрана';document.getElementById('pTarget').textContent=state.target?fmt(state.target)+' кг':'Не указан'}
-function function openEditProfile() {
+function openEditProfile() {
   document.getElementById('editHeight').value = state.height ?? '';
   document.getElementById('editInitialWeight').value = state.initialWeight ?? '';
   document.getElementById('editWeight').value = state.weight ?? '';
@@ -176,54 +176,6 @@ async function saveProfileEdits() {
 
     const value = Number(raw);
 
-    if (!Number.isFinite(value) || value <= 0) {
-      alert('Проверь введённые значения: они должны быть больше нуля.');
-      return;
-    }
-
-    values[key] = value;
-  }
-
-  const old = {
-    height: state.height,
-    initialWeight: state.initialWeight,
-    weight: state.weight,
-    waist: state.waist,
-    hips: state.hips,
-    chest: state.chest
-  };
-
-  Object.assign(state, values);
-
-  try {
-    await saveProfileToApi();
-    renderProfile();
-    renderProgress();
-    go('profile');
-    alert('Данные сохранены!');
-  } catch (error) {
-    Object.assign(state, old);
-    console.error(error);
-    alert('Не удалось сохранить данные на сервере. Попробуй ещё раз.');
-  }
-}
-
-  const values = {};
-
-  for (const [key, id] of Object.entries(fields)) {
-    const raw = document.getElementById(id).value.trim();
-
-    if (raw === '') {
-      if (key === 'waist' || key === 'hips' || key === 'chest') {
-        values[key] = null;
-        continue;
-      }
-
-      alert('Заполни рост, начальный и текущий вес.');
-      return;
-    }
-
-    const value = Number(raw);
     if (!Number.isFinite(value) || value <= 0) {
       alert('Проверь введённые значения: они должны быть больше нуля.');
       return;
@@ -351,26 +303,7 @@ await loadProfileFromApi();
     }
   }
 }
-if (!p) return;
-
-  state.gender = p.gender === 'male' ? 'Мужчина'
-    : p.gender === 'female' ? 'Женщина'
-    : (p.gender || '');
-  state.height = p.height_cm ?? null;
-  state.initialWeight = p.initial_weight_kg ?? null;
-  state.weight = p.current_weight_kg ?? p.initial_weight_kg ?? null;
-  state.goal = p.goal || '';
-  state.target = p.target_weight_kg ?? null;
-
-  const latest = p.measurements?.[0];
-  if (latest) {
-    state.waist = latest.waist_cm ?? null;
-    state.hips = latest.hips_cm ?? null;
-    state.chest = latest.chest_cm ?? null;
-  }
-
-  renderProfile();
-  renderProgress();
+enderProgress();
 }
 connectTelegram();
 </script></body></html>
