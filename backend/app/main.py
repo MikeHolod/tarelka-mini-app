@@ -9,9 +9,18 @@ from urllib.parse import parse_qsl
 import psycopg
 from psycopg.rows import dict_row
 from fastapi import FastAPI, Header, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 app = FastAPI(title="Tarelka API", version="0.2.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://mikeholod.github.io",
+    ],
+    allow_methods=["GET", "POST", "PUT", "OPTIONS"],
+    allow_headers=["Content-Type", "X-Telegram-Init-Data"],
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
