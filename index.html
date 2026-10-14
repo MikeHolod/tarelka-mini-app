@@ -79,7 +79,7 @@ function function openEditProfile() {
   document.getElementById('editChest').value = state.chest ?? '';
   go('editProfile');
 }
-function async function saveProfileEdits() {
+function async async function saveProfileEdits() {
   const fields = {
     height: 'editHeight',
     initialWeight: 'editInitialWeight',
@@ -88,6 +88,55 @@ function async function saveProfileEdits() {
     hips: 'editHips',
     chest: 'editChest'
   };
+
+  const values = {};
+
+  for (const [key, id] of Object.entries(fields)) {
+    const raw = document.getElementById(id).value.trim();
+
+    if (raw === '') {
+      if (key === 'waist' || key === 'hips' || key === 'chest') {
+        values[key] = null;
+        continue;
+      }
+
+      alert('Заполни рост, начальный и текущий вес.');
+      return;
+    }
+
+    const value = Number(raw);
+
+    if (!Number.isFinite(value) || value <= 0) {
+      alert('Проверь введённые значения: они должны быть больше нуля.');
+      return;
+    }
+
+    values[key] = value;
+  }
+
+  const old = {
+    height: state.height,
+    initialWeight: state.initialWeight,
+    weight: state.weight,
+    waist: state.waist,
+    hips: state.hips,
+    chest: state.chest
+  };
+
+  Object.assign(state, values);
+
+  try {
+    await saveProfileToApi();
+    renderProfile();
+    renderProgress();
+    go('profile');
+    alert('Данные сохранены!');
+  } catch (error) {
+    Object.assign(state, old);
+    console.error(error);
+    alert('Не удалось сохранить данные на сервере. Попробуй ещё раз.');
+  }
+}
 
   const values = {};
 
