@@ -89,9 +89,12 @@ async function saveProfileToApi() {
   });
 
   if (!response.ok) {
-    throw new Error(`Не удалось сохранить данные: ${response.status}`);
-  }
-
+  const details = await response.text();
+  console.error('Ошибка сохранения профиля:', response.status, details);
+  throw new Error(
+    `Ошибка ${response.status}: ${details || response.statusText}`
+  );
+}
   return response.json();
 }
 async function finishSetup() {
@@ -204,7 +207,7 @@ async function saveProfileEdits() {
   } catch (error) {
     Object.assign(state, old);
     console.error(error);
-    alert('Не удалось сохранить данные на сервере. Попробуй ещё раз.');
+   alert(error.message);
   }
 }
 function openMeasurementEditor(){['weight','waist','hips','chest'].forEach(k=>document.getElementById('new'+k[0].toUpperCase()+k.slice(1)).value=state[k]||'');go('editMeasurements')}
