@@ -43,4 +43,55 @@ function saveNewMeasurements(){const old=state.weight;['weight','waist','hips','
 function resetApp(){if(confirm('Сбросить данные этого прототипа?'))location.reload()}
 function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 document.getElementById('today').textContent=new Date().toLocaleDateString('ru-RU',{day:'numeric',month:'short'});
+  const API_URL = 'https://tarelka-mini-app.onrender.com';
+
+async function connectTelegram() {
+  const status = document.getElementById('uploadStatus');
+
+  if (!window.Telegram?.WebApp?.initData) {
+    console.info('Приложение открыто вне Telegram');
+    return;
+  }
+
+  const tg = window.Telegram.WebApp;
+  tg.ready();
+  tg.expand();
+
+  try {
+    const response = await fetch(`${API_URL}/api/auth/telegram`, {
+      method: 'POST',
+      headers: {
+        'X-Telegram-Init-Data': tg.initData
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`Ошибка авторизации: ${response.status}`);
+    }
+
+    const result = await response.json();
+
+    window.tarelkaTelegram = {
+      initData: tg.initData,
+      user: tg.initDataUnsafe?.user || null,
+      userId: result.user_id
+    };
+
+    const user = window.tarelkaTelegram.user;
+    if (user?.first_name) {
+      document.getElementById('profileName').textContent =
+        user.first_name;
+    }
+
+    console.info('Telegram авторизация успешна');
+  } catch (error) {
+    console.error('Ошибка подключения к серверу:', error);
+    if (status) {
+      status.textContent =
+        'Не удалось подключиться к серверу. Попробуй открыть приложение позже.';
+    }
+  }
+}
+
+connectTelegram();
 </script></body></html>
