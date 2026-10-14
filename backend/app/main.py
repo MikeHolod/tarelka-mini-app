@@ -17,14 +17,36 @@ DATABASE_URL = os.getenv("DATABASE_URL", "")
 
 def db_connect():
     if not DATABASE_URL:
-        raise HTTPException(status_code=503, detail="Database is not configured")
-    # Supabase may provide a SQLAlchemy-style URL; psycopg expects a regular PostgreSQL URL.
-    url = DATABASE_URL.replace("postgresql+psycopg://", "postgresql://", 1)
+        raise HTTPException(
+            status_code=503,
+            detail="Database is not configured"
+        )
+
+    url = DATABASE_URL.replace(
+        "postgresql+psycopg://",
+        "postgresql://",
+        1
+    )
+
     try:
-        return psycopg.connect(url, row_factory=dict_row, connect_timeout=8)
+        return psycopg.connect(
+            url,
+            row_factory=dict_row,
+            connect_timeout=8
+        )
     except Exception as exc:
-        # Keep credentials out of the response/logs.
-        raise HTTPException(status_code=503, detail="Could not connect to database. Check DATABASE_URL and Supabase network settings.") from exc
+        print(
+            f"Database connection error: "
+            f"{type(exc).__name__}: {exc}",
+            flush=True
+        )
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"Database connection failed: "
+                f"{type(exc).__name__}"
+            )
+        ) from exc
 
 
 @app.get("/health")
