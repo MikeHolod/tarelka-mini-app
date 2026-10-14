@@ -30,14 +30,28 @@ def db_connect():
 @app.get("/health")
 def health():
     database = "not_configured"
+    db_error = None
+
     if DATABASE_URL:
         try:
             with db_connect() as conn:
                 conn.execute("select 1")
             database = "connected"
-        except HTTPException:
+        except Exception as exc:
             database = "disconnected"
-    return {"ok": True, "service": "tarelka-api", "version": "0.2.0", "database": database}
+            db_error = type(exc).__name__ + ": " + str(exc)
+
+    result = {
+        "ok": True,
+        "service": "tarelka-api",
+        "version": "0.2.0",
+        "database": database,
+    }
+
+    if db_error:
+        result["database_error"] = db_error
+
+    return result
 
 
 def verify_telegram_init_data(init_data: str) -> dict:
