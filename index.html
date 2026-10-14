@@ -226,7 +226,48 @@ function resetApp(){if(confirm('Сбросить данные этого про�
 function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 document.getElementById('today').textContent=new Date().toLocaleDateString('ru-RU',{day:'numeric',month:'short'});
   const API_URL = 'https://tarelka-mini-app.onrender.com';
+async function loadProfileFromApi() {
+  const tg = window.Telegram?.WebApp;
+  if (!tg?.initData) return;
 
+  const response = await fetch(`${API_URL}/api/profile`, {
+    headers: {
+      'X-Telegram-Init-Data': tg.initData
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`Не удалось загрузить профиль: ${response.status}`);
+  }
+
+  const data = await response.json();
+  const p = data.profile;
+
+  if (!p) return;
+
+  state.gender = p.gender === 'male'
+    ? 'Мужчина'
+    : p.gender === 'female'
+      ? 'Женщина'
+      : (p.gender || '');
+
+  state.height = p.height_cm ?? null;
+  state.initialWeight = p.initial_weight_kg ?? null;
+  state.weight = p.current_weight_kg ?? p.initial_weight_kg ?? null;
+  state.goal = p.goal || '';
+  state.target = p.target_weight_kg ?? null;
+
+  const latest = data.measurements?.[0];
+
+  if (latest) {
+    state.waist = latest.waist_cm ?? null;
+    state.hips = latest.hips_cm ?? null;
+    state.chest = latest.chest_cm ?? null;
+  }
+
+  renderProfile();
+  renderProgress();
+}
 async function connectTelegram() {
   const status = document.getElementById('uploadStatus');
 
