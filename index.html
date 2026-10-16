@@ -145,11 +145,194 @@ async function finishSetup() {
 function renderStart(){document.getElementById('startData').innerHTML=`<div class="metric"><span>Рост</span><b>${state.height} см</b></div><div class="metric"><span>Вес</span><b>${fmt(state.weight)} кг</b></div>${state.waist?`<div class="metric"><span>Талия</span><b>${state.waist} см</b></div>`:''}`}
 function fmt(n){return n==null?'—':Number(n).toLocaleString('ru-RU',{maximumFractionDigits:1})}
 function previewPhoto(e){const f=e.target.files[0],img=document.getElementById('photoPreview');if(!f)return;img.src=URL.createObjectURL(f);img.style.display='block';document.getElementById('uploadStatus').textContent='Фото выбрано. В этом прототипе AI-анализ имитируется демонстрационным результатом.'}
-function analyzeFood(){const txt=document.getElementById('foodText').value.trim(),file=document.getElementById('foodFile').files[0];if(!txt&&!file){alert('Загрузи фото или опиши еду текстом');return}const guessed=txt||'состав блюда на фото';let entry={id:Date.now(),date:new Date().toISOString(),description:guessed,photo:!!file,score:txt.toLowerCase().match(/овощ|салат|брокколи|огурц|помидор|лосос|рыб|куриц|фасол/)?8:6,corrected:false};state.entries.push(entry);state.latestAnalysis=entry;renderAnalysis(entry);document.getElementById('foodText').value='';document.getElementById('foodFile').value='';document.getElementById('photoPreview').style.display='none';document.getElementById('uploadStatus').textContent='';document.getElementById('mealCount').textContent=state.entries.length+' приём'+(state.entries.length===1?' пищи':'а пищи');document.getElementById('winText').textContent='Первый шаг сделан!';}
-function renderAnalysis(e){const host=document.getElementById('chatMessages');const wrap=document.createElement('div');wrap.className='card';wrap.innerHTML=`<div class="tiny">АНАЛИЗ ПРИЁМА ПИЩИ · ${new Date(e.date).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'})}</div><h3 style="margin:8px 0">${e.corrected?'✅ Анализ обновлён':'🍽️ Разбор тарелки'}</h3><div class="bubble">${escapeHtml(e.description)}
 
-${e.corrected?'Спасибо за уточнение — в реальном приложении анализ будет пересчитан.':'Демо-оценка: если в блюде есть источник белка, добавь овощи, если их мало. По одному фото нельзя надёжно определить точные калории.'}</div><div class="metric"><span>🥦 Овощи</span><b>${e.corrected?'Уточнено':'Проверь наличие'}</b></div><div class="metric"><span>🍗 Белок</span><b>Оцени по составу</b></div><div class="metric"><span>⚖️ Баланс тарелки</span><b>${e.score}/10</b></div><button class="btn secondary" onclick="correctEntry(${e.id})">✏️ Исправить анализ</button><div class="tiny" style="margin-top:9px">Демонстрационный результат — AI пока не подключён.</div>`;host.prepend(wrap);wrap.scrollIntoView({behavior:'smooth',block:'start'})}
-function correctEntry(id){const e=state.entries.find(x=>x.id===id);const correction=prompt('Что я не распознал или распознал неправильно?');if(!correction||!correction.trim())return;e.description+=' · Уточнение пользователя: '+correction.trim();e.corrected=true;e.score=Math.max(1,Math.min(10,e.score));renderAnalysis(e)}
+async function analyzeFood() {
+  const textInput = document.getElementById('foodText');
+  const fileInput = document.getElementById('foodFile');
+  const file = fileInput.files[0];
+  const txt = textInput.value.trim();
+  const status = document.getElementById('uploadStatus');
+  const button = document.querySelector('#uploadCard .btn');
+
+  if (!txt && !file) {
+    alert('Загрузи фото или опиши еду текстом');
+    return;
+  }
+
+  const initData = window.Telegram?.WebApp?.initData || '';
+
+  if (!initData) {
+    alert('Открой приложение через Telegram, чтобы проанализировать еду.');
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append('food_text', txt);
+
+  if (file) {
+    formData.append('photo', file);
+  }
+
+  try {
+    if (button) button.disabled = true;
+    status.textContent = 'Анализирую приём пищи…';
+
+    const response = await fetch(
+      'https://tarelka-mini-app.onrender.com/api/food/analyze',
+      {
+        method: 'POST',
+        headers: {
+          'X-Telegram-Init-Data': initData
+        },
+        body: formData
+      }
+    );
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(
+        data.detail || 'Не удалось проанализировать еду'
+      );
+    }
+
+    const entry = {
+      id: Date.now(),
+      date: new Date().toISOString(),
+      description: data.description || txt || 'Блюдо на фото',
+      photo: !!file,
+      score: null,
+      analysis: data.analysis,
+      corrected: false
+    };
+
+    state.entries.push(entry);
+    state.latestAnalysis = entry;
+
+    renderAnalysis(entry);
+
+    textInput.value = '';
+    fileInput.value = '';
+
+    document.getElementById('photoPreview').style.display = 'none';
+    status.textContent = '';
+
+    document.getElementById('mealCount').textContent =
+      state.entries.length + ' приём' +
+      (state.entries.length === 1 ? ' пищи' : 'а пищи');
+
+    document.getElementById('winText').textContent =
+      'Первый шаг сделан!';
+
+  } catch (error) {
+    console.error('Food analysis error:', error);
+    status.textContent = 'Не получилось. ' + error.message;
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+
+function renderAnalysis(e) {
+  const host = document.getElementById('chatMessages');
+  const wrap = document.createElement('div');
+  wrap.className = 'card';
+
+  const analysisText = e.analysis
+    || 'Результат анализа пока недоступен.';
+
+  wrap.innerHTML = `
+    <div class="tiny">
+      АНАЛИЗ ПРИЁМА ПИЩИ · ${new Date(e.date).toLocaleTimeString(
+        'ru-RU',
+        { hour: '2-digit', minute: '2-digit' }
+      )}
+    </div>
+
+    <h3 style="margin:8px 0">
+      ${e.corrected ? '✅ Анализ обновлён' : '🍽️ Разбор тарелки'}
+    </h3>
+
+    <div class="bubble" style="white-space:pre-line">${escapeHtml(
+      e.description
+    )}
+
+${escapeHtml(analysisText)}</div>
+
+    <button class="btn secondary"
+      onclick="correctEntry(${e.id})">
+      ✏️ Уточнить еду и пересчитать
+    </button>
+
+    <div class="tiny" style="margin-top:9px">
+      ИИ может ошибаться. Если блюдо распознано неверно,
+      напиши, что действительно находится на тарелке.
+    </div>
+  `;
+
+  host.prepend(wrap);
+  wrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+async function correctEntry(id) {
+  const e = state.entries.find(x => x.id === id);
+  if (!e) return;
+
+  const correction = prompt(
+    'Что я распознал неправильно? Напиши, что действительно находится на тарелке.'
+  );
+
+  if (!correction || !correction.trim()) return;
+
+  const initData = window.Telegram?.WebApp?.initData || '';
+
+  if (!initData) {
+    alert('Открой приложение через Telegram, чтобы пересчитать анализ.');
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append(
+    'food_text',
+    'Пользователь уточнил состав блюда.\n' +
+    'Первоначальное описание: ' + e.description + '\n' +
+    'Предыдущий анализ: ' + (e.analysis || '') + '\n' +
+    'Исправление пользователя: ' + correction.trim() + '\n' +
+    'Пересчитай оценку с учётом исправления. ' +
+    'Не используй предыдущие ошибочные предположения.'
+  );
+
+  try {
+    const response = await fetch(
+      'https://tarelka-mini-app.onrender.com/api/food/analyze',
+      {
+        method: 'POST',
+        headers: {
+          'X-Telegram-Init-Data': initData
+        },
+        body: formData
+      }
+    );
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(
+        data.detail || 'Не удалось пересчитать анализ'
+      );
+    }
+
+    e.description += ' · Уточнение: ' + correction.trim();
+    e.analysis = data.analysis;
+    e.corrected = true;
+
+    renderAnalysis(e);
+  } catch (error) {
+    console.error('Correction error:', error);
+    alert('Не удалось пересчитать анализ: ' + error.message);
+  }
+}
+{const e=state.entries.find(x=>x.id===id);const correction=prompt('Что я не распознал или распознал неправильно?');if(!correction||!correction.trim())return;e.description+=' · Уточнение пользователя: '+correction.trim();e.corrected=true;e.score=Math.max(1,Math.min(10,e.score));renderAnalysis(e)}
 function renderProgress(){document.getElementById('progressWeight').innerHTML=fmt(state.weight)+' <small>кг</small>';let diff=state.weight-state.initialWeight;document.getElementById('weightChange').textContent=diff===0?'Точка старта':(diff<0?'С начала: −'+fmt(Math.abs(diff))+' кг':'С начала: +'+fmt(diff)+' кг');document.getElementById('weightBar').style.width=Math.min(100,Math.max(8,100-(state.weight/(state.initialWeight||1))*50))+'%';document.getElementById('photoCount').textContent=state.entries.filter(e=>e.photo).length;document.getElementById('entryCount').textContent=state.entries.length;document.getElementById('progressMeasurements').innerHTML=['waist','hips','chest'].map((k,i)=>`<div class="metric"><span>${['Талия','Бёдра','Грудь'][i]}</span><b>${state[k]?state[k]+' см':'Не указано'}</b></div>`).join('')}
 function renderProfile(){document.getElementById('pGender').textContent=state.gender||'—';document.getElementById('pHeight').textContent=state.height+' см';document.getElementById('pInitialWeight').textContent=fmt(state.initialWeight)+' кг';document.getElementById('pCurrentWeight').textContent=fmt(state.weight)+' кг';['waist','hips','chest'].forEach(k=>document.getElementById('p'+k[0].toUpperCase()+k.slice(1)).textContent=state[k]?state[k]+' см':'—');document.getElementById('pGoal').textContent=state.goal||'Пока не выбрана';document.getElementById('pTarget').textContent=state.target?fmt(state.target)+' кг':'Не указан'}
 function openEditProfile() {
