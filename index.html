@@ -535,7 +535,17 @@ if (navMenu && foodTextInput) {
       navMenu.style.display = 'flex';
     }, 300);
   });
-
+document.addEventListener('click', (event) => {
+    if (
+      document.activeElement === foodTextInput &&
+      !foodTextInput.contains(event.target) &&
+      !event.target.closest('button') &&
+      !event.target.closest('input') &&
+      !event.target.closest('textarea')
+    ) {
+      foodTextInput.blur();
+    }
+  });
   if (window.visualViewport) {
     window.visualViewport.addEventListener('resize', updateKeyboardState);
   }
