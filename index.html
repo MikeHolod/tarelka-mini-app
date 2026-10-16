@@ -316,4 +316,26 @@ await loadProfileFromApi();
   }
 }
 connectTelegram();
+
+if (window.visualViewport) {
+  const viewport = window.visualViewport;
+  const nav = document.getElementById('nav');
+
+  function adjustNavForKeyboard() {
+    if (!nav) return;
+
+    const keyboardHeight = Math.max(
+      0,
+      window.innerHeight - viewport.height - viewport.offsetTop
+    );
+
+    nav.style.bottom = keyboardHeight > 100
+      ? keyboardHeight + 'px'
+      : '0px';
+  }
+
+  viewport.addEventListener('resize', adjustNavForKeyboard);
+  viewport.addEventListener('scroll', adjustNavForKeyboard);
+  window.addEventListener('resize', adjustNavForKeyboard);
+}
 </script></body></html>
