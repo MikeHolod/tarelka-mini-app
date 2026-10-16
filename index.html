@@ -337,4 +337,26 @@ nav.style.display = keyboardHeight > 100 ? 'none' : 'flex';
   viewport.addEventListener('scroll', adjustNavForKeyboard);
   window.addEventListener('resize', adjustNavForKeyboard);
 }
+  const foodTextInput = document.getElementById('foodText');
+const navMenu = document.getElementById('nav');
+
+if (foodTextInput && navMenu) {
+  foodTextInput.addEventListener('focus', () => {
+    navMenu.style.display = 'none';
+  });
+
+  foodTextInput.addEventListener('blur', () => {
+    setTimeout(() => {
+      const activeScreen = document.querySelector('.screen.active');
+
+      if (activeScreen && ![
+        'welcome', 'height', 'weight', 'gender',
+        'measurements', 'goal', 'start',
+        'editProfile', 'editMeasurements'
+      ].includes(activeScreen.id)) {
+        navMenu.style.display = 'flex';
+      }
+    }, 300);
+  });
+}
 </script></body></html>
