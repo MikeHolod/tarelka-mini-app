@@ -317,49 +317,45 @@ await loadProfileFromApi();
 }
 connectTelegram();
 
-if (window.visualViewport) {
-  const viewport = window.visualViewport;
-  const nav = document.getElementById('nav');
+const navMenu = document.getElementById('nav');
+const foodTextInput = document.getElementById('foodText');
 
-  function adjustNavForKeyboard() {
-    if (!nav) return;
+if (navMenu && foodTextInput) {
+  let keyboardOpen = false;
 
-    const keyboardHeight = Math.max(
-      0,
-      window.innerHeight - viewport.height - viewport.offsetTop
-    );
+  function updateKeyboardState() {
+    if (!window.visualViewport) return;
 
-   nav.style.bottom = '0px';
-nav.style.display =
-  (keyboardHeight > 100 || document.activeElement === document.getElementById('foodText'))
-    ? 'none'
-    : 'flex';
+    const viewport = window.visualViewport;
+    const keyboardHeight =
+      window.innerHeight - viewport.height - viewport.offsetTop;
+
+    keyboardOpen = document.activeElement === foodTextInput
+      && keyboardHeight > 100;
+
+    navMenu.style.display =
+      document.activeElement === foodTextInput ? 'none' : 'flex';
   }
 
-  viewport.addEventListener('resize', adjustNavForKeyboard);
-  viewport.addEventListener('scroll', adjustNavForKeyboard);
-  window.addEventListener('resize', adjustNavForKeyboard);
-}
-  const foodTextInput = document.getElementById('foodText');
-const navMenu = document.getElementById('nav');
-
-if (foodTextInput && navMenu) {
   foodTextInput.addEventListener('focus', () => {
     navMenu.style.display = 'none';
+
+    setTimeout(() => {
+      foodTextInput.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center'
+      });
+    }, 300);
   });
 
   foodTextInput.addEventListener('blur', () => {
     setTimeout(() => {
-      const activeScreen = document.querySelector('.screen.active');
-
-      if (activeScreen && ![
-        'welcome', 'height', 'weight', 'gender',
-        'measurements', 'goal', 'start',
-        'editProfile', 'editMeasurements'
-      ].includes(activeScreen.id)) {
-        navMenu.style.display = 'flex';
-      }
+      navMenu.style.display = 'flex';
     }, 300);
   });
+
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', updateKeyboardState);
+  }
 }
 </script></body></html>
