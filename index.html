@@ -330,7 +330,10 @@ if (window.visualViewport) {
     );
 
    nav.style.bottom = '0px';
-nav.style.display = keyboardHeight > 100 ? 'none' : 'flex';
+nav.style.display =
+  (keyboardHeight > 100 || document.activeElement === document.getElementById('foodText'))
+    ? 'none'
+    : 'flex';
   }
 
   viewport.addEventListener('resize', adjustNavForKeyboard);
