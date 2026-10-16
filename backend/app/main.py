@@ -1,4 +1,6 @@
 from fastapi.middleware.cors import CORSMiddleware
+import base64
+from openai import OpenAI
 import hashlib
 import hmac
 import json
@@ -8,7 +10,7 @@ from urllib.parse import parse_qsl
 
 import psycopg
 from psycopg.rows import dict_row
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -32,7 +34,7 @@ app.add_middleware(
 )
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 DATABASE_URL = os.getenv("DATABASE_URL", "")
-
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
 def db_connect():
     if not DATABASE_URL:
@@ -226,8 +228,117 @@ def get_profile(x_telegram_init_data: str = Header(default="")):
     return {"profile": row}
 
 
+
 @app.post("/api/food/analyze")
-def analyze_food(x_telegram_init_data: str = Header(default="")):
+def analyze_food(
+    food_text: str = Form(default=""),
+    photo: UploadFile | None = File(default=None),
+    x_telegram_init_data: str = Header(default=""),
+):
     authenticated_user(x_telegram_init_data)
-    # Real photo analysis is deliberately not faked; AI provider integration is the next step.
-    raise HTTPException(status_code=501, detail="Photo analysis AI is not configured yet")
+
+    if not OPENAI_API_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="OpenAI API key is not configured",
+        )
+
+    if not food_text.strip() and photo is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Upload a food photo or enter a description",
+        )
+
+    prompt = (
+        "Ты — дружелюбный помощник приложения «Тарелка». "
+        "Оцени приём пищи по принципу Гарвардской тарелки: "
+        "примерно половина — овощи и фрукты, четверть — "
+        "источники белка, четверть — цельнозерновые продукты. "
+        "Отвечай по-русски, коротко и доброжелательно. "
+        "Укажи, что удалось распознать, что хорошо сбалансировано "
+        "и что можно улучшить. Допустима лёгкая шутка. "
+        "Не выдумывай ингредиенты, если их нельзя уверенно определить. "
+        "Не утверждай, что знаешь точную калорийность по фотографии."
+    )
+
+    content = [
+        {
+            "type": "input_text",
+            "text": (
+                prompt
+                + "\n\nОписание пользователя: "
+                + (food_text.strip() or "Пользователь не добавил описание.")
+            ),
+        }
+    ]
+
+    if photo is not None:
+        content_type = (photo.content_type or "").lower()
+
+        if content_type not in (
+            "image/jpeg",
+            "image/png",
+            "image/webp",
+            "image/gif",
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="Unsupported image format",
+            )
+
+        image_bytes = photo.file.read()
+
+        if len(image_bytes) > 10 * 1024 * 1024:
+            raise HTTPException(
+                status_code=400,
+                detail="Image must be no larger than 10 MB",
+            )
+
+        if not image_bytes:
+            raise HTTPException(
+                status_code=400,
+                detail="The uploaded image is empty",
+            )
+
+        encoded_image = base64.b64encode(image_bytes).decode("utf-8")
+
+        content.append(
+            {
+                "type": "input_image",
+                "image_url": (
+                    f"data:{content_type};base64,{encoded_image}"
+                ),
+                "detail": "auto",
+            }
+        )
+
+    try:
+        client = OpenAI(api_key=OPENAI_API_KEY)
+
+        response = client.responses.create(
+            model="gpt-4o-mini",
+            input=[
+                {
+                    "role": "user",
+                    "content": content,
+                }
+            ],
+            max_output_tokens=500,
+        )
+
+        return {
+            "success": True,
+            "analysis": response.output_text,
+            "description": food_text.strip() or "Блюдо на фото",
+            "photo": photo is not None,
+        }
+
+    except Exception as exc:
+        print(
+            f"OpenAI analysis error: {type(exc).__name__}: {exc}",
+            flush=True,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail="Food analysis failed. Please try again.",
+        ) from exc
