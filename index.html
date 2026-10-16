@@ -329,9 +329,8 @@ if (window.visualViewport) {
       window.innerHeight - viewport.height - viewport.offsetTop
     );
 
-    nav.style.bottom = keyboardHeight > 100
-      ? keyboardHeight + 'px'
-      : '0px';
+   nav.style.bottom = '0px';
+nav.style.display = keyboardHeight > 100 ? 'none' : 'flex';
   }
 
   viewport.addEventListener('resize', adjustNavForKeyboard);
