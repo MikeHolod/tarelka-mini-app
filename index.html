@@ -538,9 +538,18 @@ window.tarelkaTelegram = {
   userId: result.user_id
 };
 
+
 await loadProfileFromApi();
 
-    const user = window.tarelkaTelegram.user;
+try {
+  const messages = await loadChatHistory();
+  console.info('История чата загружена:', messages.length);
+} catch (historyError) {
+  console.error('Не удалось загрузить историю чата:', historyError);
+}
+
+const user = window.tarelkaTelegram.user;
+
     if (user?.first_name) {
       document.getElementById('profileName').textContent =
         user.first_name;
