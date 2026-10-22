@@ -206,10 +206,26 @@ async function analyzeFood() {
       corrected: false
     };
 
+
     state.entries.push(entry);
     state.latestAnalysis = entry;
 
     renderAnalysis(entry);
+
+    try {
+      await saveChatMessage(
+        'user',
+        txt.trim() || 'Отправлено фото блюда'
+      );
+
+      await saveChatMessage(
+        'assistant',
+        entry.description + '\n\n' + (entry.analysis || '')
+      );
+    } catch (historyError) {
+      console.error('Не удалось сохранить историю чата:', historyError);
+    }
+
 
     textInput.value = '';
     fileInput.value = '';
