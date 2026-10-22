@@ -407,7 +407,30 @@ function resetApp(){if(confirm('Сбросить данные этого про�
 function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 document.getElementById('today').textContent=new Date().toLocaleDateString('ru-RU',{day:'numeric',month:'short'});
   const API_URL = 'https://tarelka-mini-app.onrender.com';
-async function loadProfileFromApi() {
+
+async function saveChatMessage(role, content) {
+  const initData = window.Telegram?.WebApp?.initData || '';
+
+  if (!initData || !content?.trim()) return;
+
+  const response = await fetch(`${API_URL}/api/chat/message`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Telegram-Init-Data': initData
+    },
+    body: JSON.stringify({
+      role,
+      content: content.trim()
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error('Не удалось сохранить сообщение в истории');
+  }
+}
+
+  async function loadProfileFromApi() {
   const tg = window.Telegram?.WebApp;
   if (!tg?.initData) return;
 
