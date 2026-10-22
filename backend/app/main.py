@@ -342,3 +342,62 @@ def analyze_food(
             status_code=502,
             detail="Food analysis failed. Please try again.",
         ) from exc
+
+class ChatMessageIn(BaseModel):
+    role: str
+    content: str = Field(min_length=1, max_length=10000)
+
+
+@app.get("/api/chat/history")
+def get_chat_history(x_telegram_init_data: str = Header(default="")):
+    user = authenticated_user(x_telegram_init_data)
+
+    with db_connect() as conn:
+        user_id = upsert_user(conn, user)
+
+        rows = conn.execute(
+            """
+            SELECT id, role, content, created_at
+            FROM public.chat_message
+            WHERE user_id = %s
+            ORDER BY created_at ASC, id ASC
+            LIMIT 200
+            """,
+            (user_id,),
+        ).fetchall()
+
+    return {"messages": rows}
+
+
+@app.post("/api/chat/message")
+def save_chat_message(
+    message: ChatMessageIn,
+    x_telegram_init_data: str = Header(default=""),
+):
+    user = authenticated_user(x_telegram_init_data)
+
+    if message.role not in ("user", "assistant"):
+        raise HTTPException(
+            status_code=422,
+            detail="Role must be user or assistant",
+        )
+
+    if not message.content.strip():
+        raise HTTPException(
+            status_code=422,
+            detail="Message content cannot be empty",
+        )
+
+    with db_connect() as conn:
+        user_id = upsert_user(conn, user)
+
+        row = conn.execute(
+            """
+            INSERT INTO public.chat_message (user_id, role, content)
+            VALUES (%s, %s, %s)
+            RETURNING id, role, content, created_at
+            """,
+            (user_id, message.role, message.content.strip()),
+        ).fetchone()
+
+    return {"saved": True, "message": row}
