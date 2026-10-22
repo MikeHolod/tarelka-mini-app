@@ -465,6 +465,31 @@ async function loadChatHistory() {
   return data.messages || [];
 }
 
+function renderChatHistory(messages) {
+  const host = document.getElementById('chatMessages');
+  if (!host) return;
+
+  host.replaceChildren();
+
+  messages.forEach(message => {
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble';
+    bubble.style.whiteSpace = 'pre-line';
+    bubble.style.marginBottom = '10px';
+
+    const label = document.createElement('div');
+    label.className = 'tiny';
+    label.textContent =
+      message.role === 'user' ? 'ТЫ' : 'ТАРЕЛКА';
+
+    const content = document.createElement('div');
+    content.textContent = message.content;
+
+    bubble.append(label, content);
+    host.appendChild(bubble);
+  });
+}
+
   async function loadProfileFromApi() {
   const tg = window.Telegram?.WebApp;
   if (!tg?.initData) return;
