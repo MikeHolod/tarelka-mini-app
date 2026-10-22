@@ -446,6 +446,25 @@ async function saveChatMessage(role, content) {
   }
 }
 
+async function loadChatHistory() {
+  const initData = window.Telegram?.WebApp?.initData || '';
+
+  if (!initData) return;
+
+  const response = await fetch(`${API_URL}/api/chat/history`, {
+    headers: {
+      'X-Telegram-Init-Data': initData
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error('Не удалось загрузить историю чата');
+  }
+
+  const data = await response.json();
+  return data.messages || [];
+}
+
   async function loadProfileFromApi() {
   const tg = window.Telegram?.WebApp;
   if (!tg?.initData) return;
