@@ -566,12 +566,15 @@ window.tarelkaTelegram = {
 
 await loadProfileFromApi();
 
+
 try {
   const messages = await loadChatHistory();
+  renderChatHistory(messages);
   console.info('История чата загружена:', messages.length);
 } catch (historyError) {
   console.error('Не удалось загрузить историю чата:', historyError);
 }
+
 
 const user = window.tarelkaTelegram.user;
 
