@@ -346,7 +346,8 @@ ${escapeHtml(analysisText)}</div>
     </div>
   `;
 
-  host.prepend(wrap);
+ host.appendChild(wrap);
+host.scrollTop = host.scrollHeight;
   wrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
