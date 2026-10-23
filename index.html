@@ -15,46 +15,65 @@
   scroll-margin-bottom: 120px;
 }
 
-/* История переписки в стиле мессенджера */
+
+/* Область переписки */
 #chatMessages {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  max-height: 55vh;
+  align-items: stretch;
+  gap: 12px;
+  height: 42vh;
+  min-height: 280px;
+  max-height: 460px;
   overflow-y: auto;
-  overscroll-behavior: contain;
-  padding: 12px 2px;
+  overscroll-behavior-y: contain;
+  padding: 14px 10px;
+  margin: 12px 0;
+  background: #e9eee5;
+  border: 1px solid #dce3d7;
+  border-radius: 18px;
   scroll-behavior: smooth;
 }
 
+/* Общий стиль облачков */
 #chatMessages .chat-message {
-  max-width: 84%;
+  display: block;
+  width: fit-content;
+  max-width: 82%;
   padding: 10px 13px;
-  border-radius: 16px;
+  border-radius: 17px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   line-height: 1.45;
+  box-sizing: border-box;
 }
 
+/* Сообщения пользователя — справа */
 #chatMessages .chat-message.user {
   align-self: flex-end;
-  background: #dcefd6;
-  color: #233522;
+  margin-left: auto;
+  background: #d4edc9;
+  color: #243321;
   border-bottom-right-radius: 5px;
 }
 
+/* Сообщения Тарелки — слева */
 #chatMessages .chat-message.assistant {
   align-self: flex-start;
-  background: #f0f0e9;
+  margin-right: auto;
+  background: #ffffff;
   color: #292a25;
   border-bottom-left-radius: 5px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
 }
 
+/* Подпись отправителя */
 #chatMessages .chat-message .tiny {
   margin-bottom: 5px;
   font-size: 10px;
-  opacity: 0.7;
+  opacity: 0.65;
 }
+
 </style><script src="https://telegram.org/js/telegram-web-app.js"></script></head><body><div class="app"><header class="top"><div class="brand">🥗 <span>тарелка</span></div><div class="date" id="today"></div></header><main>
 <section class="screen active" id="welcome"><div class="card hero"><div class="pill">ТВОЙ AI-НАПАРНИК</div><h1 class="h1">Давай сделаем питание немного лучше</h1><p>Без подсчёта калорий и очередных диет. Просто фотографируй то, что ешь — будем постепенно менять привычки.</p><button class="btn" onclick="go('height')">Начать →</button></div><div class="card"><b>Как это работает</b><div class="metric"><span>📷</span><span>Фотографируешь еду</span></div><div class="metric"><span>🤖</span><span>Получаешь понятный разбор</span></div><div class="metric"><span>📈</span><span>Замечаешь свой прогресс</span></div></div></section>
 <section class="screen" id="height"><h1 class="h1">Введи рост</h1><p class="sub">Нужен, чтобы сохранить твою точку старта.</p><label class="tiny">Рост</label><div class="field"><input id="heightInput" type="number" placeholder="178" value="178"><span class="unit">см</span></div><button class="btn" onclick="saveAndGo('height','weight')">Продолжить</button></section>
