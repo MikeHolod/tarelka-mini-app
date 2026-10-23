@@ -271,7 +271,10 @@ async function analyzeFood() {
     state.latestAnalysis = entry;
 
     renderAnalysis(entry);
-
+addChatMessage(
+  'user',
+  txt.trim() || 'Отправлено фото блюда'
+);
     try {
       await saveChatMessage(
         'user',
@@ -550,6 +553,27 @@ messages.slice().reverse().forEach(message => {
     host.appendChild(bubble);
   });
     host.scrollTop = host.scrollHeight;
+}
+
+function addChatMessage(role, messageText) {
+  const host = document.getElementById('chatMessages');
+  if (!host) return;
+
+  const bubble = document.createElement('div');
+  bubble.className = 'chat-message ' + role;
+  bubble.style.whiteSpace = 'pre-line';
+  bubble.style.marginBottom = '10px';
+
+  const label = document.createElement('div');
+  label.className = 'tiny';
+  label.textContent = role === 'user' ? 'ТЫ' : 'ТАРЕЛКА';
+
+  const content = document.createElement('div');
+  content.textContent = messageText;
+
+  bubble.append(label, content);
+  host.appendChild(bubble);
+  host.scrollTop = host.scrollHeight;
 }
 
   async function loadProfileFromApi() {
