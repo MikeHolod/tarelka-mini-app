@@ -267,14 +267,17 @@ async function analyzeFood() {
     };
 
 
-    state.entries.push(entry);
-    state.latestAnalysis = entry;
 
-    renderAnalysis(entry);
+state.entries.push(entry);
+state.latestAnalysis = entry;
+
 addChatMessage(
   'user',
   txt.trim() || 'Отправлено фото блюда'
 );
+
+renderAnalysis(entry);
+
     try {
       await saveChatMessage(
         'user',
