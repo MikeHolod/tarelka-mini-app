@@ -533,7 +533,7 @@ function renderChatHistory(messages) {
 
   messages.forEach(message => {
     const bubble = document.createElement('div');
-    bubble.className = 'bubble';
+   bubble.className = 'chat-message ' + message.role;
     bubble.style.whiteSpace = 'pre-line';
     bubble.style.marginBottom = '10px';
 
