@@ -238,14 +238,13 @@ def get_profile(x_telegram_init_data: str = Header(default="")):
     return {"profile": row}
 
 
-
 @app.post("/api/food/analyze")
 def analyze_food(
     food_text: str = Form(default=""),
     photo: UploadFile | None = File(default=None),
     x_telegram_init_data: str = Header(default=""),
 ):
-    authenticated_user(x_telegram_init_data)
+    user = authenticated_user(x_telegram_init_data)
 
     if not OPENAI_API_KEY:
         raise HTTPException(
@@ -253,11 +252,51 @@ def analyze_food(
             detail="OpenAI API key is not configured",
         )
 
+    if supabase is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Supabase is not configured",
+        )
+
     if not food_text.strip() and photo is None:
         raise HTTPException(
             status_code=400,
             detail="Upload a food photo or enter a description",
         )
+
+    image_bytes = None
+    content_type = None
+    photo_path = None
+
+    if photo is not None:
+        content_type = (photo.content_type or "").lower()
+
+        allowed_types = {
+            "image/jpeg": "jpg",
+            "image/png": "png",
+            "image/webp": "webp",
+            "image/gif": "gif",
+        }
+
+        if content_type not in allowed_types:
+            raise HTTPException(
+                status_code=400,
+                detail="Unsupported image format",
+            )
+
+        image_bytes = photo.file.read()
+
+        if len(image_bytes) > 10 * 1024 * 1024:
+            raise HTTPException(
+                status_code=400,
+                detail="Image must be no larger than 10 MB",
+            )
+
+        if not image_bytes:
+            raise HTTPException(
+                status_code=400,
+                detail="The uploaded image is empty",
+            )
 
     prompt = (
         "Ты — дружелюбный помощник приложения «Тарелка». "
@@ -282,34 +321,7 @@ def analyze_food(
         }
     ]
 
-    if photo is not None:
-        content_type = (photo.content_type or "").lower()
-
-        if content_type not in (
-            "image/jpeg",
-            "image/png",
-            "image/webp",
-            "image/gif",
-        ):
-            raise HTTPException(
-                status_code=400,
-                detail="Unsupported image format",
-            )
-
-        image_bytes = photo.file.read()
-
-        if len(image_bytes) > 10 * 1024 * 1024:
-            raise HTTPException(
-                status_code=400,
-                detail="Image must be no larger than 10 MB",
-            )
-
-        if not image_bytes:
-            raise HTTPException(
-                status_code=400,
-                detail="The uploaded image is empty",
-            )
-
+    if image_bytes is not None:
         encoded_image = base64.b64encode(image_bytes).decode("utf-8")
 
         content.append(
@@ -336,12 +348,7 @@ def analyze_food(
             max_output_tokens=500,
         )
 
-        return {
-            "success": True,
-            "analysis": response.output_text,
-            "description": food_text.strip() or "Блюдо на фото",
-            "photo": photo is not None,
-        }
+        analysis = response.output_text
 
     except Exception as exc:
         print(
@@ -352,6 +359,84 @@ def analyze_food(
             status_code=502,
             detail="Food analysis failed. Please try again.",
         ) from exc
+
+    try:
+        with db_connect() as conn:
+            db_user = conn.execute(
+                "select id from public.app_user where telegram_id=%s",
+                (int(user["id"]),),
+            ).fetchone()
+
+            if db_user is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail="User not found",
+                )
+
+            user_id = db_user["id"]
+
+            if image_bytes is not None:
+                import uuid
+
+                extension = {
+                    "image/jpeg": "jpg",
+                    "image/png": "png",
+                    "image/webp": "webp",
+                    "image/gif": "gif",
+                }[content_type]
+
+                photo_path = (
+                    f"{user_id}/{uuid.uuid4()}.{extension}"
+                )
+
+                supabase.storage.from_("food-photos").upload(
+                    photo_path,
+                    image_bytes,
+                    {"content-type": content_type},
+                )
+
+            entry = conn.execute(
+                """
+                insert into public.food_entry (
+                    user_id,
+                    photo_url,
+                    original_analysis,
+                    balance_score,
+                    ai_comment
+                )
+                values (%s, %s, %s, %s, %s)
+                returning id
+                """,
+                (
+                    user_id,
+                    photo_path,
+                    {"text": analysis},
+                    None,
+                    analysis,
+                ),
+            ).fetchone()
+
+        return {
+            "success": True,
+            "id": entry["id"],
+            "analysis": analysis,
+            "description": food_text.strip() or "Блюдо на фото",
+            "photo": photo is not None,
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as exc:
+        print(
+            f"Food entry save error: {type(exc).__name__}: {exc}",
+            flush=True,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Could not save food entry",
+        ) from exc
+
 
 class ChatMessageIn(BaseModel):
     role: str
