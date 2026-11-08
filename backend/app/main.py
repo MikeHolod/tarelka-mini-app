@@ -1,6 +1,7 @@
 from fastapi.middleware.cors import CORSMiddleware
 import base64
 from openai import OpenAI
+from supabase import create_client
 import hashlib
 import hmac
 import json
@@ -35,7 +36,16 @@ app.add_middleware(
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
 
+supabase = None
+
+if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:
+    supabase = create_client(
+        SUPABASE_URL,
+        SUPABASE_SERVICE_ROLE_KEY
+    )
 def db_connect():
     if not DATABASE_URL:
         raise HTTPException(
