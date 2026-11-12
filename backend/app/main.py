@@ -15,6 +15,7 @@ from fastapi import FastAPI, Header, HTTPException, File, Form, UploadFile, Requ
 from aiogram import Bot, Dispatcher, Router, types
 from aiogram.filters import CommandStart
 from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.context import FSMContext
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
