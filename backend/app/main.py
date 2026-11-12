@@ -650,6 +650,30 @@ async def process_goal(message: types.Message, state: FSMContext):
         "Хочешь указать желаемый вес?\n\n"
         "Напиши его в килограммах или отправь «Пропустить»."
     )
+@router.message(Registration.target_weight)
+async def process_target_weight(message: types.Message, state: FSMContext):
+    if message.text and message.text.strip().lower() == "пропустить":
+        target_weight = None
+    else:
+        try:
+            target_weight = float(message.text.strip().replace(",", "."))
+            if not 20 <= target_weight <= 500:
+                raise ValueError
+        except (ValueError, AttributeError):
+            await message.answer(
+                "Введи желаемый вес числом от 20 до 500 кг "
+                "или отправь «Пропустить»."
+            )
+            return
+
+    await state.update_data(target_weight_kg=target_weight)
+    await state.set_state(Registration.waist)
+
+    await message.answer(
+        "Теперь укажи обхват талии в сантиметрах.\n\n"
+        "Например: 80\n"
+        "Если не хочешь указывать, напиши «Пропустить»."
+    )
 dp.include_router(router)
 @app.on_event("startup")
 async def setup_telegram_webhook():
