@@ -576,6 +576,26 @@ async def process_gender(message: types.Message, state: FSMContext):
         "Например: 178",
         reply_markup=types.ReplyKeyboardRemove(),
     )
+    @router.message(Registration.height)
+async def process_height(message: types.Message, state: FSMContext):
+    try:
+        height = int(message.text.strip())
+        if not 80 <= height <= 250:
+            raise ValueError
+    except (ValueError, AttributeError):
+        await message.answer(
+            "Введи рост целым числом от 80 до 250 см.\n"
+            "Например: 178"
+        )
+        return
+
+    await state.update_data(height_cm=height)
+    await state.set_state(Registration.weight)
+
+    await message.answer(
+        "Отлично! Теперь укажи свой текущий вес в килограммах.\n\n"
+        "Например: 72.5"
+    )
 dp.include_router(router)
 @app.on_event("startup")
 async def setup_telegram_webhook():
