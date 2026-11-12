@@ -630,7 +630,7 @@ async def process_weight(message: types.Message, state: FSMContext):
         "Какая у тебя главная цель?",
         reply_markup=keyboard,
     )
-    @router.message(Registration.goal)
+@router.message(Registration.goal)
 async def process_goal(message: types.Message, state: FSMContext):
     allowed_goals = (
         "Постепенно похудеть",
