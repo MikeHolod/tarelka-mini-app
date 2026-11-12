@@ -519,6 +519,7 @@ class Registration(StatesGroup):
     hips = State()
     chest = State()
 
+
 @router.message(CommandStart())
 async def start_command(message: types.Message, state: FSMContext):
     tg_user = message.from_user
@@ -535,12 +536,55 @@ async def start_command(message: types.Message, state: FSMContext):
     try:
         with db_connect() as conn:
             upsert_user(conn, user_data)
+
+            profile = conn.execute(
+                """
+                select gender, height_cm, initial_weight_kg, goal
+                from public.app_user
+                where telegram_id=%s
+                """,
+                (tg_user.id,),
+            ).fetchone()
+
     except Exception as exc:
-        print(f"Telegram user save error: {type(exc).__name__}: {exc}", flush=True)
-        await message.answer("Не удалось начать регистрацию. Попробуй ещё раз позже.")
+        print(
+            f"Telegram user save error: {type(exc).__name__}: {exc}",
+            flush=True,
+        )
+        await message.answer(
+            "Не удалось начать работу. Попробуй ещё раз позже."
+        )
         return
 
     await state.clear()
+
+    if (
+        profile
+        and profile["gender"]
+        and profile["height_cm"]
+        and profile["initial_weight_kg"]
+        and profile["goal"]
+    ):
+        keyboard = types.ReplyKeyboardMarkup(
+            keyboard=[
+                [
+                    types.KeyboardButton(text="🍽️ Записать еду"),
+                    types.KeyboardButton(text="📈 Прогресс"),
+                ],
+                [
+                    types.KeyboardButton(text="👤 Мои данные"),
+                ],
+            ],
+            resize_keyboard=True,
+        )
+
+        await message.answer(
+            "С возвращением! 🥗\n\n"
+            "Что будем делать сегодня?",
+            reply_markup=keyboard,
+        )
+        return
+
     await state.set_state(Registration.gender)
 
     keyboard = types.ReplyKeyboardMarkup(
@@ -560,6 +604,7 @@ async def start_command(message: types.Message, state: FSMContext):
         "Для начала выбери свой пол:",
         reply_markup=keyboard,
     )
+
 
 @router.message(Registration.gender)
 async def process_gender(message: types.Message, state: FSMContext):
