@@ -498,3 +498,47 @@ def save_chat_message(
         ).fetchone()
 
     return {"saved": True, "message": row}
+    # Telegram Bot
+
+TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
+
+bot = Bot(token=BOT_TOKEN) if BOT_TOKEN else None
+
+dp = Dispatcher()
+router = Router()
+
+
+@router.message(CommandStart())
+async def start_command(message: types.Message):
+    await message.answer(
+        "Привет! 🥗\n\n"
+        "Я — Тарелка. Помогу следить за питанием, "
+        "анализировать еду и отслеживать прогресс.\n\n"
+        "Скоро здесь появятся все функции приложения!"
+    )
+
+
+dp.include_router(router)
+
+
+@app.post("/telegram/webhook")
+async def telegram_webhook(request: Request):
+    if bot is None:
+        raise HTTPException(status_code=503, detail="Bot is not configured")
+
+    secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+
+    if not TELEGRAM_WEBHOOK_SECRET or not hmac.compare_digest(
+        secret, TELEGRAM_WEBHOOK_SECRET
+    ):
+        raise HTTPException(status_code=403, detail="Invalid webhook secret")
+
+    try:
+        data = await request.json()
+        update = types.Update.model_validate(data, context={"bot": bot})
+        await dp.feed_update(bot, update)
+    except Exception as exc:
+        print(f"Telegram webhook error: {type(exc).__name__}: {exc}", flush=True)
+        raise HTTPException(status_code=400, detail="Webhook processing failed")
+
+    return {"ok": True}
