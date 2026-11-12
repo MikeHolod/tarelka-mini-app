@@ -576,7 +576,9 @@ async def process_gender(message: types.Message, state: FSMContext):
         "Например: 178",
         reply_markup=types.ReplyKeyboardRemove(),
     )
-    @router.message(Registration.height)
+
+
+@router.message(Registration.height)
 async def process_height(message: types.Message, state: FSMContext):
     try:
         height = int(message.text.strip())
@@ -596,6 +598,8 @@ async def process_height(message: types.Message, state: FSMContext):
         "Отлично! Теперь укажи свой текущий вес в килограммах.\n\n"
         "Например: 72.5"
     )
+
+
 dp.include_router(router)
 @app.on_event("startup")
 async def setup_telegram_webhook():
