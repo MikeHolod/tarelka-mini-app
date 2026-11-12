@@ -781,6 +781,151 @@ async def process_measurements(message: types.Message, state: FSMContext):
     )
 
 
+@router.message(lambda message: bool(message.photo))
+async def process_food_photo(message: types.Message, state: FSMContext):
+    if await state.get_state() is not None:
+        await message.answer(
+            "Сначала закончи регистрацию, пожалуйста. "
+            "После этого сможешь отправлять фото еды."
+        )
+        return
+
+    if not OPENAI_API_KEY or supabase is None:
+        await message.answer(
+            "Сервис анализа еды временно недоступен. Попробуй позже."
+        )
+        return
+
+    await message.answer("Фото получил! Сейчас рассмотрю твою тарелку.")
+
+    try:
+        photo = message.photo[-1]
+        downloaded = await message.bot.download(photo.file_id)
+
+        if downloaded is None:
+            raise ValueError("Could not download Telegram photo")
+
+        image_bytes = downloaded.read()
+
+        if not image_bytes:
+            raise ValueError("Empty photo")
+
+        if len(image_bytes) > 10 * 1024 * 1024:
+            await message.answer(
+                "Фотография слишком большая. Попробуй отправить её ещё раз."
+            )
+            return
+
+        encoded_image = base64.b64encode(image_bytes).decode("utf-8")
+
+        prompt = (
+            "Ты — дружелюбный помощник приложения «Тарелка». "
+            "Оцени приём пищи по принципу Гарвардской тарелки: "
+            "примерно половина — овощи и фрукты, четверть — "
+            "источники белка, четверть — цельнозерновые продукты. "
+            "Отвечай по-русски, коротко и доброжелательно. "
+            "Укажи, что удалось распознать, что хорошо сбалансировано "
+            "и что можно улучшить. Допустима лёгкая шутка. "
+            "Не выдумывай ингредиенты, если их нельзя уверенно определить. "
+            "Не утверждай, что знаешь точную калорийность по фотографии."
+        )
+
+        client = OpenAI(api_key=OPENAI_API_KEY)
+
+        response = client.responses.create(
+            model="gpt-4o-mini",
+            input=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": prompt,
+                        },
+                        {
+                            "type": "input_image",
+                            "image_url": (
+                                f"data:image/jpeg;base64,{encoded_image}"
+                            ),
+                            "detail": "auto",
+                        },
+                    ],
+                }
+            ],
+            max_output_tokens=500,
+        )
+
+        analysis = response.output_text
+
+    except Exception as exc:
+        print(
+            f"Bot food analysis error: {type(exc).__name__}: {exc}",
+            flush=True,
+        )
+        await message.answer(
+            "Не получилось проанализировать фотографию. "
+            "Попробуй отправить её ещё раз."
+        )
+        return
+
+    try:
+        import uuid
+
+        telegram_user = message.from_user
+
+        with db_connect() as conn:
+            db_user = conn.execute(
+                "select id from public.app_user where telegram_id=%s",
+                (telegram_user.id,),
+            ).fetchone()
+
+            if db_user is None:
+                await message.answer(
+                    "Сначала зарегистрируйся с помощью команды /start."
+                )
+                return
+
+            user_id = db_user["id"]
+            photo_path = f"{user_id}/{uuid.uuid4()}.jpg"
+
+            supabase.storage.from_("food-photos").upload(
+                photo_path,
+                image_bytes,
+                {"content-type": "image/jpeg"},
+            )
+
+            conn.execute(
+                """
+                insert into public.food_entry (
+                    user_id,
+                    photo_url,
+                    original_analysis,
+                    balance_score,
+                    ai_comment
+                )
+                values (%s, %s, %s, %s, %s)
+                """,
+                (
+                    user_id,
+                    photo_path,
+                    {"text": analysis},
+                    None,
+                    analysis,
+                ),
+            )
+
+        await message.answer(analysis)
+
+    except Exception as exc:
+        print(
+            f"Bot food save error: {type(exc).__name__}: {exc}",
+            flush=True,
+        )
+        await message.answer(
+            "Анализ готов, но не удалось сохранить его в дневник. "
+            "Попробуй позже."
+        )
+
 dp.include_router(router)
 @app.on_event("startup")
 async def setup_telegram_webhook():
