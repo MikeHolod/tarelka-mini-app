@@ -560,7 +560,22 @@ async def start_command(message: types.Message, state: FSMContext):
         reply_markup=keyboard,
     )
 
+@router.message(Registration.gender)
+async def process_gender(message: types.Message, state: FSMContext):
+    if message.text not in ("Мужчина", "Женщина"):
+        await message.answer("Пожалуйста, выбери пол кнопкой ниже.")
+        return
 
+    gender = "male" if message.text == "Мужчина" else "female"
+
+    await state.update_data(gender=gender)
+    await state.set_state(Registration.height)
+
+    await message.answer(
+        "Какой у тебя рост в сантиметрах?\n\n"
+        "Например: 178",
+        reply_markup=types.ReplyKeyboardRemove(),
+    )
 dp.include_router(router)
 @app.on_event("startup")
 async def setup_telegram_webhook():
