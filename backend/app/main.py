@@ -519,7 +519,7 @@ class Registration(StatesGroup):
     chest = State()
 
 @router.message(CommandStart())
-async def start_command(message: types.Message):
+async def start_command(message: types.Message, state: FSMContext):
     tg_user = message.from_user
 
     if tg_user is None:
@@ -536,16 +536,28 @@ async def start_command(message: types.Message):
             upsert_user(conn, user_data)
     except Exception as exc:
         print(f"Telegram user save error: {type(exc).__name__}: {exc}", flush=True)
-        await message.answer(
-            "Произошла ошибка при запуске. Попробуй ещё раз чуть позже."
-        )
+        await message.answer("Не удалось начать регистрацию. Попробуй ещё раз позже.")
         return
+
+    await state.clear()
+    await state.set_state(Registration.gender)
+
+    keyboard = types.ReplyKeyboardMarkup(
+        keyboard=[
+            [
+                types.KeyboardButton(text="Мужчина"),
+                types.KeyboardButton(text="Женщина"),
+            ]
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
 
     await message.answer(
         "Привет! 🥗\n\n"
-        "Я — Тарелка. Помогу следить за питанием, "
-        "анализировать еду и отслеживать прогресс.\n\n"
-        "Скоро здесь появятся все функции приложения!"
+        "Давай познакомимся и настроим Тарелку под тебя.\n\n"
+        "Для начала выбери свой пол:",
+        reply_markup=keyboard,
     )
 
 
