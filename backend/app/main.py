@@ -11,6 +11,7 @@ from urllib.parse import parse_qsl
 
 import psycopg
 from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 from fastapi import FastAPI, Header, HTTPException, File, Form, UploadFile, Request
 from aiogram import Bot, Dispatcher, Router, types
 from aiogram.filters import CommandStart
@@ -908,7 +909,7 @@ async def process_food_photo(message: types.Message, state: FSMContext):
                 (
                     user_id,
                     photo_path,
-                    {"text": analysis},
+                    Jsonb({"text": analysis}),
                     None,
                     analysis,
                 ),
