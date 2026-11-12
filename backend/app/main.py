@@ -650,6 +650,7 @@ async def process_goal(message: types.Message, state: FSMContext):
         "Хочешь указать желаемый вес?\n\n"
         "Напиши его в килограммах или отправь «Пропустить»."
     )
+
 @router.message(Registration.target_weight)
 async def process_target_weight(message: types.Message, state: FSMContext):
     if message.text and message.text.strip().lower() == "пропустить":
@@ -670,10 +671,116 @@ async def process_target_weight(message: types.Message, state: FSMContext):
     await state.set_state(Registration.waist)
 
     await message.answer(
-        "Теперь укажи обхват талии в сантиметрах.\n\n"
-        "Например: 80\n"
-        "Если не хочешь указывать, напиши «Пропустить»."
+        "Последний шаг! Хочешь указать замеры тела?\n\n"
+        "Напиши значения через запятую в порядке:\n"
+        "талия, бёдра, грудь.\n\n"
+        "Например: 80, 95, 92\n"
+        "Можно пропустить отдельный замер, поставив «-».\n"
+        "Например: 80, -, 92\n\n"
+        "Если не хочешь указывать замеры, напиши «Пропустить»."
     )
+
+
+@router.message(Registration.waist)
+async def process_measurements(message: types.Message, state: FSMContext):
+    waist = None
+    hips = None
+    chest = None
+
+    if not message.text or message.text.strip().lower() != "пропустить":
+        try:
+            values = [value.strip() for value in message.text.split(",")]
+
+            if not 1 <= len(values) <= 3:
+                raise ValueError
+
+            measurements = []
+
+            for value in values:
+                if value in ("-", "—", ""):
+                    measurements.append(None)
+                else:
+                    number = float(value.replace(",", "."))
+                    if not 20 <= number <= 250:
+                        raise ValueError
+                    measurements.append(number)
+
+            measurements += [None] * (3 - len(measurements))
+            waist, hips, chest = measurements
+
+        except (ValueError, AttributeError):
+            await message.answer(
+                "Не получилось разобрать замеры.\n\n"
+                "Введи значения через запятую в порядке "
+                "талия, бёдра, грудь.\n"
+                "Например: 80, 95, 92\n"
+                "Для пропуска отдельного замера используй «-».\n"
+                "Или напиши «Пропустить»."
+            )
+            return
+
+    await state.update_data(
+        waist_cm=waist,
+        hips_cm=hips,
+        chest_cm=chest,
+    )
+
+    data = await state.get_data()
+    telegram_user = message.from_user
+
+    user_data = {
+        "id": telegram_user.id,
+        "username": telegram_user.username,
+        "first_name": telegram_user.first_name,
+    }
+
+    with db_connect() as conn:
+        user_id = upsert_user(conn, user_data)
+
+        conn.execute(
+            """update public.app_user
+               set gender=%s,
+                   height_cm=%s,
+                   initial_weight_kg=%s,
+                   current_weight_kg=%s,
+                   goal=%s,
+                   target_weight_kg=%s,
+                   updated_at=now()
+               where id=%s""",
+            (
+                data["gender"],
+                data["height_cm"],
+                data["weight_kg"],
+                data["weight_kg"],
+                data["goal"],
+                data.get("target_weight_kg"),
+                user_id,
+            ),
+        )
+
+        conn.execute(
+            """insert into public.measurement
+               (user_id, weight_kg, waist_cm, hips_cm, chest_cm)
+               values (%s, %s, %s, %s, %s)""",
+            (
+                user_id,
+                data["weight_kg"],
+                waist,
+                hips,
+                chest,
+            ),
+        )
+
+    await state.clear()
+
+    await message.answer(
+        "Отлично! Регистрация завершена.\n\n"
+        "Теперь можешь присылать мне фото еды или описывать "
+        "свой приём пищи текстом.",
+        reply_markup=types.ReplyKeyboardRemove(),
+    )
+
+
 dp.include_router(router)
 @app.on_event("startup")
 async def setup_telegram_webhook():
