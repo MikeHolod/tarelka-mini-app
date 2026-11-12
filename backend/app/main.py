@@ -507,7 +507,15 @@ bot = Bot(token=BOT_TOKEN) if BOT_TOKEN else None
 
 dp = Dispatcher()
 router = Router()
-
+class Registration(StatesGroup):
+    gender = State()
+    height = State()
+    weight = State()
+    goal = State()
+    target_weight = State()
+    waist = State()
+    hips = State()
+    chest = State()
 
 @router.message(CommandStart())
 async def start_command(message: types.Message):
