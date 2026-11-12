@@ -510,6 +510,27 @@ router = Router()
 
 @router.message(CommandStart())
 async def start_command(message: types.Message):
+    tg_user = message.from_user
+
+    if tg_user is None:
+        return
+
+    user_data = {
+        "id": tg_user.id,
+        "username": tg_user.username,
+        "first_name": tg_user.first_name,
+    }
+
+    try:
+        with db_connect() as conn:
+            upsert_user(conn, user_data)
+    except Exception as exc:
+        print(f"Telegram user save error: {type(exc).__name__}: {exc}", flush=True)
+        await message.answer(
+            "Произошла ошибка при запуске. Попробуй ещё раз чуть позже."
+        )
+        return
+
     await message.answer(
         "Привет! 🥗\n\n"
         "Я — Тарелка. Помогу следить за питанием, "
