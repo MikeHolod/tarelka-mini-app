@@ -14,6 +14,7 @@ from psycopg.rows import dict_row
 from fastapi import FastAPI, Header, HTTPException, File, Form, UploadFile, Request
 from aiogram import Bot, Dispatcher, Router, types
 from aiogram.filters import CommandStart
+from aiogram.fsm.state import State, StatesGroup
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
