@@ -519,7 +519,23 @@ async def start_command(message: types.Message):
 
 
 dp.include_router(router)
+@app.on_event("startup")
+async def setup_telegram_webhook():
+    if bot is None:
+        print("Telegram bot is not configured", flush=True)
+        return
 
+    if not TELEGRAM_WEBHOOK_SECRET:
+        print("Telegram webhook secret is missing", flush=True)
+        return
+
+    await bot.set_webhook(
+        url="https://tarelka-mini-app.onrender.com/telegram/webhook",
+        secret_token=TELEGRAM_WEBHOOK_SECRET,
+        drop_pending_updates=False,
+    )
+
+    print("Telegram webhook configured", flush=True)
 
 @app.post("/telegram/webhook")
 async def telegram_webhook(request: Request):
