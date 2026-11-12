@@ -630,6 +630,26 @@ async def process_weight(message: types.Message, state: FSMContext):
         "Какая у тебя главная цель?",
         reply_markup=keyboard,
     )
+    @router.message(Registration.goal)
+async def process_goal(message: types.Message, state: FSMContext):
+    allowed_goals = (
+        "Постепенно похудеть",
+        "Наладить питание",
+        "Похудеть, сохранив мышцы",
+        "Следить за собой",
+    )
+
+    if message.text not in allowed_goals:
+        await message.answer("Пожалуйста, выбери цель одной из кнопок.")
+        return
+
+    await state.update_data(goal=message.text)
+    await state.set_state(Registration.target_weight)
+
+    await message.answer(
+        "Хочешь указать желаемый вес?\n\n"
+        "Напиши его в килограммах или отправь «Пропустить»."
+    )
 dp.include_router(router)
 @app.on_event("startup")
 async def setup_telegram_webhook():
