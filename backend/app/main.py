@@ -927,6 +927,158 @@ async def process_food_photo(message: types.Message, state: FSMContext):
             "Попробуй позже."
         )
 
+@router.message(
+    lambda message: bool(message.text)
+    and not message.text.startswith("/")
+)
+async def process_food_text(message: types.Message, state: FSMContext):
+    if await state.get_state() is not None:
+        await message.answer(
+            "Сначала закончи регистрацию, пожалуйста. "
+            "После этого сможешь записывать еду."
+        )
+        return
+
+    food_text = message.text.strip()
+
+    if not food_text:
+        return
+
+    if len(food_text) > 3000:
+        await message.answer(
+            "Описание получилось слишком длинным. "
+            "Попробуй сократить его до 3000 символов."
+        )
+        return
+
+    if not OPENAI_API_KEY or supabase is None:
+        await message.answer(
+            "Сервис анализа еды временно недоступен. Попробуй позже."
+        )
+        return
+
+    await message.answer("Принял! Сейчас разберусь, что у тебя было на тарелке.")
+
+    try:
+        prompt = (
+            "Ты — дружелюбный помощник приложения «Тарелка». "
+            "Твоя задача — анализировать питание по описанию пользователя. "
+            "Отвечай исключительно по-русски, коротко и доброжелательно. "
+
+            "Сначала определи тип приёма пищи: суп, салат, основное блюдо, "
+            "гарнир, перекус, десерт или другой вариант. "
+
+            "Учитывай особенности конкретного блюда. "
+            "Не пытайся применять пропорции Гарвардской тарелки буквально "
+            "к супам, напиткам, десертам и другим блюдам, для которых "
+            "это неприменимо. "
+
+            "Для обычного основного блюда ориентируйся на принцип "
+            "Гарвардской тарелки: примерно половина — овощи и фрукты, "
+            "четверть — источники белка, четверть — цельнозерновые "
+            "продукты или другие подходящие источники сложных углеводов. "
+
+            "Оцени, что в блюде хорошо с точки зрения баланса питания "
+            "и что можно улучшить. "
+            "Предлагай конкретные и уместные рекомендации, "
+            "а не случайные продукты. "
+
+            "Не выдумывай ингредиенты, количество еды и способ приготовления, "
+            "если пользователь их не указал. "
+            "Не утверждай, что знаешь точную калорийность или вес порции. "
+            "Если информации недостаточно, прямо скажи об этом. "
+
+            "Не ругай пользователя и не оценивай еду как плохую или хорошую. "
+            "Избегай шаблонных вступлений и длинных рассуждений. "
+            "Дай понятный и полезный ответ."
+        )
+
+        client = OpenAI(api_key=OPENAI_API_KEY)
+
+        response = client.responses.create(
+            model="gpt-4o-mini",
+            input=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": (
+                                f"{prompt}\n\n"
+                                f"Описание еды от пользователя: {food_text}"
+                            ),
+                        }
+                    ],
+                }
+            ],
+            max_output_tokens=500,
+        )
+
+        analysis = response.output_text
+
+        if not analysis:
+            raise ValueError("Empty AI response")
+
+    except Exception as exc:
+        print(
+            f"Bot food text analysis error: {type(exc).__name__}: {exc}",
+            flush=True,
+        )
+        await message.answer(
+            "Не получилось проанализировать описание. "
+            "Попробуй ещё раз."
+        )
+        return
+
+    try:
+        telegram_user = message.from_user
+
+        with db_connect() as conn:
+            db_user = conn.execute(
+                "select id from public.app_user where telegram_id=%s",
+                (telegram_user.id,),
+            ).fetchone()
+
+            if db_user is None:
+                await message.answer(
+                    "Сначала зарегистрируйся с помощью команды /start."
+                )
+                return
+
+            user_id = db_user["id"]
+
+            conn.execute(
+                """
+                insert into public.food_entry (
+                    user_id,
+                    detected_foods,
+                    original_analysis,
+                    balance_score,
+                    ai_comment
+                )
+                values (%s, %s, %s, %s, %s)
+                """,
+                (
+                    user_id,
+                    Jsonb({"user_description": food_text}),
+                    Jsonb({"text": analysis}),
+                    None,
+                    analysis,
+                ),
+            )
+
+        await message.answer(analysis)
+
+    except Exception as exc:
+        print(
+            f"Bot food text save error: {type(exc).__name__}: {exc}",
+            flush=True,
+        )
+        await message.answer(
+            "Анализ готов, но не удалось сохранить его в дневник. "
+            "Попробуй позже."
+        )
+
 dp.include_router(router)
 @app.on_event("startup")
 async def setup_telegram_webhook():
