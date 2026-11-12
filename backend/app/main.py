@@ -599,7 +599,37 @@ async def process_height(message: types.Message, state: FSMContext):
         "Например: 72.5"
     )
 
+@router.message(Registration.weight)
+async def process_weight(message: types.Message, state: FSMContext):
+    try:
+        weight = float(message.text.strip().replace(",", "."))
+        if not 20 <= weight <= 500:
+            raise ValueError
+    except (ValueError, AttributeError):
+        await message.answer(
+            "Введи вес числом от 20 до 500 кг.\n"
+            "Например: 72.5"
+        )
+        return
 
+    await state.update_data(weight_kg=weight)
+    await state.set_state(Registration.goal)
+
+    keyboard = types.ReplyKeyboardMarkup(
+        keyboard=[
+            [types.KeyboardButton(text="Постепенно похудеть")],
+            [types.KeyboardButton(text="Наладить питание")],
+            [types.KeyboardButton(text="Похудеть, сохранив мышцы")],
+            [types.KeyboardButton(text="Следить за собой")],
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
+
+    await message.answer(
+        "Какая у тебя главная цель?",
+        reply_markup=keyboard,
+    )
 dp.include_router(router)
 @app.on_event("startup")
 async def setup_telegram_webhook():
