@@ -979,6 +979,121 @@ async def start_food_entry(message: types.Message):
         "Я проанализирую блюдо и сохраню результат в твой дневник."
     )
 
+@router.message(lambda message: message.text == "📈 Прогресс")
+async def show_progress(message: types.Message):
+    telegram_user = message.from_user
+
+    if telegram_user is None:
+        return
+
+    try:
+        with db_connect() as conn:
+            profile = conn.execute(
+                """
+                select initial_weight_kg,
+                       current_weight_kg,
+                       target_weight_kg,
+                       goal
+                from public.app_user
+                where telegram_id=%s
+                """,
+                (telegram_user.id,),
+            ).fetchone()
+
+            if profile is None:
+                await message.answer(
+                    "Сначала зарегистрируйся с помощью команды /start."
+                )
+                return
+
+            latest = conn.execute(
+                """
+                select weight_kg, waist_cm, hips_cm, chest_cm, created_at
+                from public.measurement
+                where user_id = (
+                    select id from public.app_user
+                    where telegram_id=%s
+                )
+                order by created_at desc
+                limit 1
+                """,
+                (telegram_user.id,),
+            ).fetchone()
+
+        def fmt(value):
+            return f"{float(value):g}".replace(".", ",")
+
+        initial_weight = profile["initial_weight_kg"]
+
+        current_weight = (
+            latest["weight_kg"]
+            if latest and latest["weight_kg"] is not None
+            else profile["current_weight_kg"]
+        )
+
+        lines = ["📈 Твой прогресс", ""]
+
+        if current_weight is not None:
+            lines.append(f"Текущий вес: **{fmt(current_weight)} кг**")
+
+        if initial_weight is not None:
+            lines.append(f"Вес при регистрации: {fmt(initial_weight)} кг")
+
+        if current_weight is not None and initial_weight is not None:
+            difference = float(current_weight) - float(initial_weight)
+
+            if difference < 0:
+                change = f"−{fmt(abs(difference))}"
+            elif difference > 0:
+                change = f"+{fmt(difference)}"
+            else:
+                change = "0"
+
+            lines.append(f"Изменение: {change} кг")
+
+        target_weight = profile["target_weight_kg"]
+
+        if target_weight is not None:
+            lines.append(f"Желаемый вес: {fmt(target_weight)} кг")
+
+        if latest:
+            lines.extend(["", "📏 Последние замеры:"])
+
+            for label, field in (
+                ("Талия", "waist_cm"),
+                ("Бёдра", "hips_cm"),
+                ("Грудь", "chest_cm"),
+            ):
+                value = latest[field]
+                if value is not None:
+                    lines.append(f"{label}: {fmt(value)} см")
+
+            if latest["created_at"]:
+                date = latest["created_at"].strftime("%d.%m.%Y")
+                lines.extend(["", f"Дата последней записи: {date}"])
+
+        if profile["goal"]:
+            lines.extend(["", f"Твоя цель: {profile['goal']}"])
+
+        lines.extend([
+            "",
+            "Продолжай записывать питание и следить за изменениями! 🥗"
+        ])
+
+        await message.answer(
+            "\n".join(lines),
+            parse_mode="Markdown",
+        )
+
+    except Exception as exc:
+        print(
+            f"Progress error: {type(exc).__name__}: {exc}",
+            flush=True,
+        )
+        await message.answer(
+            "Не получилось загрузить прогресс. Попробуй немного позже."
+        )
+
 @router.message(
     lambda message: bool(message.text)
     and not message.text.startswith("/")
