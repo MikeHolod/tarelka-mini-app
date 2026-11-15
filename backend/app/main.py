@@ -1068,9 +1068,9 @@ async def show_progress(message: types.Message):
                 if value is not None:
                     lines.append(f"{label}: {fmt(value)} см")
 
-            if latest["measured_at"]:
-            = latest["measured_at"].strftime("%d.%m.%Y")
-            lines.extend(["", f"Дата последней записи: {date}"])
+                        if latest["measured_at"]:
+                date = latest["measured_at"].strftime("%d.%m.%Y")
+                lines.extend(["", f"Дата последней записи: {date}"])
 
         if profile["goal"]:
             lines.extend(["", f"Твоя цель: {profile['goal']}"])
