@@ -518,7 +518,8 @@ class Registration(StatesGroup):
     waist = State()
     hips = State()
     chest = State()
-
+class ProfileEdit(StatesGroup):
+    weight = State()
 
 @router.message(CommandStart())
 async def start_command(message: types.Message, state: FSMContext):
