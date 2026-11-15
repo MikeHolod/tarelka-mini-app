@@ -677,8 +677,14 @@ async def process_weight(message: types.Message, state: FSMContext):
         "Какая у тебя главная цель?",
         reply_markup=keyboard,
     )
+
+
 @router.message(ProfileEdit.weight)
 async def process_weight_edit(message: types.Message, state: FSMContext):
+    if message.text == "👤 Мои данные":
+        await state.clear()
+        await show_profile(message, state)
+        return
     try:
         weight = float(message.text.strip().replace(",", "."))
         if not 20 <= weight <= 500:
