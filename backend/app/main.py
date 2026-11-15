@@ -677,6 +677,88 @@ async def process_weight(message: types.Message, state: FSMContext):
         "Какая у тебя главная цель?",
         reply_markup=keyboard,
     )
+    @router.message(ProfileEdit.weight)
+async def process_weight_edit(message: types.Message, state: FSMContext):
+    try:
+        weight = float(message.text.strip().replace(",", "."))
+        if not 20 <= weight <= 500:
+            raise ValueError
+    except (ValueError, AttributeError):
+        await message.answer(
+            "Введи вес числом от 20 до 500 кг.\n"
+            "Например: 64,5"
+        )
+        return
+
+    telegram_user = message.from_user
+
+    try:
+        with db_connect() as conn:
+            user = conn.execute(
+                """
+                select id
+                from public.app_user
+                where telegram_id=%s
+                """,
+                (telegram_user.id,),
+            ).fetchone()
+
+            if user is None:
+                await message.answer(
+                    "Не нашёл твой профиль. Попробуй начать с /start."
+                )
+                await state.clear()
+                return
+
+            latest = conn.execute(
+                """
+                select waist_cm, hips_cm, chest_cm
+                from public.measurement
+                where user_id=%s
+                order by measured_at desc
+                limit 1
+                """,
+                (user["id"],),
+            ).fetchone()
+
+            waist = latest["waist_cm"] if latest else None
+            hips = latest["hips_cm"] if latest else None
+            chest = latest["chest_cm"] if latest else None
+
+            conn.execute(
+                """
+                update public.app_user
+                set current_weight_kg=%s,
+                    updated_at=now()
+                where id=%s
+                """,
+                (weight, user["id"]),
+            )
+
+            conn.execute(
+                """
+                insert into public.measurement
+                    (user_id, weight_kg, waist_cm, hips_cm, chest_cm, measured_at)
+                values (%s, %s, %s, %s, %s, now())
+                """,
+                (user["id"], weight, waist, hips, chest),
+            )
+
+        await state.clear()
+
+        await message.answer(
+            f"Вес обновлён! Новый текущий вес: {weight:g} кг.\n\n"
+            "Первоначальный вес при регистрации сохранён."
+        )
+
+    except Exception as exc:
+        print(
+            f"Weight edit error: {type(exc).__name__}: {exc}",
+            flush=True,
+        )
+        await message.answer(
+            "Не получилось обновить вес. Попробуй немного позже."
+        )
 @router.message(Registration.goal)
 async def process_goal(message: types.Message, state: FSMContext):
     allowed_goals = (
@@ -1189,7 +1271,19 @@ async def show_profile(message: types.Message):
         else:
             lines.append("Замеры пока не добавлены.")
 
-        await message.answer("\n".join(lines))
+        await message.answer(
+    "\n".join(lines),
+    reply_markup=types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                types.InlineKeyboardButton(
+                    text="✏️ Изменить вес",
+                    callback_data="edit_weight",
+                )
+            ]
+        ]
+    ),
+)
 
     except Exception as exc:
         print(
@@ -1199,6 +1293,16 @@ async def show_profile(message: types.Message):
         await message.answer(
             "Не получилось загрузить твои данные. Попробуй немного позже."
         )
+        @router.callback_query(lambda callback: callback.data == "edit_weight")
+async def start_weight_edit(callback: types.CallbackQuery, state: FSMContext):
+    await state.set_state(ProfileEdit.weight)
+
+    await callback.message.answer(
+        "Введи свой текущий вес в килограммах.\n\n"
+        "Например: 64,5"
+    )
+
+    await callback.answer()
 async def process_food_text(message: types.Message, state: FSMContext):
     if await state.get_state() is not None:
         await message.answer(
