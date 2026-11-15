@@ -1271,7 +1271,7 @@ async def show_profile(message: types.Message):
         else:
             lines.append("Замеры пока не добавлены.")
 
-        await message.answer(
+await message.answer(
     "\n".join(lines),
     reply_markup=types.InlineKeyboardMarkup(
         inline_keyboard=[
@@ -1293,7 +1293,7 @@ async def show_profile(message: types.Message):
         await message.answer(
             "Не получилось загрузить твои данные. Попробуй немного позже."
         )
-        @router.callback_query(lambda callback: callback.data == "edit_weight")
+@router.callback_query(lambda callback: callback.data == "edit_weight")
 async def start_weight_edit(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(ProfileEdit.weight)
 
@@ -1303,6 +1303,8 @@ async def start_weight_edit(callback: types.CallbackQuery, state: FSMContext):
     )
 
     await callback.answer()
+
+
 async def process_food_text(message: types.Message, state: FSMContext):
     if await state.get_state() is not None:
         await message.answer(
