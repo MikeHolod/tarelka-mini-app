@@ -971,6 +971,13 @@ async def process_food_photo(message: types.Message, state: FSMContext):
             "Анализ готов, но не удалось сохранить его в дневник. "
             "Попробуй позже."
         )
+@router.message(lambda message: message.text == "🍽️ Записать еду")
+async def start_food_entry(message: types.Message):
+    await message.answer(
+        "Отлично! 🥗\n\n"
+        "Отправь фотографию еды или напиши, что ты съел.\n\n"
+        "Я проанализирую блюдо и сохраню результат в твой дневник."
+    )
 
 @router.message(
     lambda message: bool(message.text)
