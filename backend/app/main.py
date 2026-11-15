@@ -1014,7 +1014,7 @@ async def show_progress(message: types.Message):
                     select id from public.app_user
                     where telegram_id=%s
                 )
-                order by created_at desc
+                order by measured_at desc
                 limit 1
                 """,
                 (telegram_user.id,),
