@@ -1098,6 +1098,106 @@ async def show_progress(message: types.Message):
     lambda message: bool(message.text)
     and not message.text.startswith("/")
 )
+@router.message(lambda message: message.text == "👤 Мои данные")
+async def show_profile(message: types.Message):
+    telegram_user = message.from_user
+
+    if telegram_user is None:
+        return
+
+    try:
+        with db_connect() as conn:
+            profile = conn.execute(
+                """
+                select gender,
+                       height_cm,
+                       initial_weight_kg,
+                       current_weight_kg,
+                       target_weight_kg,
+                       goal
+                from public.app_user
+                where telegram_id=%s
+                """,
+                (telegram_user.id,),
+            ).fetchone()
+
+            if profile is not None:
+                latest = conn.execute(
+                    """
+                    select weight_kg, waist_cm, hips_cm, chest_cm, measured_at
+                    from public.measurement
+                    where user_id = (
+                        select id from public.app_user
+                        where telegram_id=%s
+                    )
+                    order by measured_at desc
+                    limit 1
+                    """,
+                    (telegram_user.id,),
+                ).fetchone()
+            else:
+                latest = None
+
+        if profile is None:
+            await message.answer(
+                "Не нашёл твои данные. Попробуй начать с команды /start."
+            )
+            return
+
+        def fmt(value):
+            return f"{float(value):g}".replace(".", ",")
+
+        gender = {
+            "male": "Мужской",
+            "female": "Женский",
+        }.get(profile["gender"], "Не указан")
+
+        current_weight = (
+            latest["weight_kg"]
+            if latest and latest["weight_kg"] is not None
+            else profile["current_weight_kg"]
+        )
+
+        lines = [
+            "👤 Твои данные",
+            "",
+            f"Пол: {gender}",
+            f"Рост: {fmt(profile['height_cm']) + ' см' if profile['height_cm'] is not None else 'Не указан'}",
+            f"Вес при регистрации: {fmt(profile['initial_weight_kg']) + ' кг' if profile['initial_weight_kg'] is not None else 'Не указан'}",
+            f"Текущий вес: {fmt(current_weight) + ' кг' if current_weight is not None else 'Не указан'}",
+            f"Желаемый вес: {fmt(profile['target_weight_kg']) + ' кг' if profile['target_weight_kg'] is not None else 'Не указан'}",
+            f"Цель: {profile['goal'] or 'Не указана'}",
+            "",
+            "📏 Последние замеры:",
+        ]
+
+        if latest:
+            for label, field in (
+                ("Талия", "waist_cm"),
+                ("Бёдра", "hips_cm"),
+                ("Грудь", "chest_cm"),
+            ):
+                value = latest[field]
+                lines.append(
+                    f"{label}: {fmt(value) + ' см' if value is not None else 'Не указаны'}"
+                )
+
+            if latest["measured_at"]:
+                date = latest["measured_at"].strftime("%d.%m.%Y")
+                lines.extend(["", f"Дата замеров: {date}"])
+        else:
+            lines.append("Замеры пока не добавлены.")
+
+        await message.answer("\n".join(lines))
+
+    except Exception as exc:
+        print(
+            f"Profile error: {type(exc).__name__}: {exc}",
+            flush=True,
+        )
+        await message.answer(
+            "Не получилось загрузить твои данные. Попробуй немного позже."
+        )
 async def process_food_text(message: types.Message, state: FSMContext):
     if await state.get_state() is not None:
         await message.answer(
