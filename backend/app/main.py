@@ -1182,8 +1182,10 @@ async def show_progress(message: types.Message):
     and not message.text.startswith("/")
 )
 @router.message(lambda message: message.text == "👤 Мои данные")
-async def show_profile(message: types.Message):
+async def show_profile(message: types.Message, state: FSMContext):
     telegram_user = message.from_user
+    
+    await state.clear()
 
     if telegram_user is None:
         return
