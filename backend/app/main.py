@@ -1008,8 +1008,8 @@ async def show_progress(message: types.Message):
 
             latest = conn.execute(
                 """
-                select weight_kg, waist_cm, hips_cm, chest_cm, created_at
-                from public.measurement
+               select weight_kg, waist_cm, hips_cm, chest_cm, measured_at
+from public.measurement
                 where user_id = (
                     select id from public.app_user
                     where telegram_id=%s
@@ -1068,9 +1068,9 @@ async def show_progress(message: types.Message):
                 if value is not None:
                     lines.append(f"{label}: {fmt(value)} см")
 
-            if latest["created_at"]:
-                date = latest["created_at"].strftime("%d.%m.%Y")
-                lines.extend(["", f"Дата последней записи: {date}"])
+            if latest["measured_at"]:
+    date = latest["measured_at"].strftime("%d.%m.%Y")
+    lines.extend(["", f"Дата последней записи: {date}"])
 
         if profile["goal"]:
             lines.extend(["", f"Твоя цель: {profile['goal']}"])
