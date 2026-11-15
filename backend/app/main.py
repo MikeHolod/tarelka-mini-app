@@ -1271,19 +1271,19 @@ async def show_profile(message: types.Message):
         else:
             lines.append("Замеры пока не добавлены.")
 
-await message.answer(
-    "\n".join(lines),
-    reply_markup=types.InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                types.InlineKeyboardButton(
-                    text="✏️ Изменить вес",
-                    callback_data="edit_weight",
-                )
-            ]
-        ]
-    ),
-)
+        await message.answer(
+            "\n".join(lines),
+            reply_markup=types.InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        types.InlineKeyboardButton(
+                            text="✏️ Изменить вес",
+                            callback_data="edit_weight",
+                        )
+                    ]
+                ]
+            ),
+        )
 
     except Exception as exc:
         print(
@@ -1293,6 +1293,8 @@ await message.answer(
         await message.answer(
             "Не получилось загрузить твои данные. Попробуй немного позже."
         )
+
+
 @router.callback_query(lambda callback: callback.data == "edit_weight")
 async def start_weight_edit(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(ProfileEdit.weight)
