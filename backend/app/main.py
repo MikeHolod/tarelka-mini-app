@@ -906,13 +906,26 @@ async def process_measurements(message: types.Message, state: FSMContext):
             ),
         )
 
-    await state.clear()
+        await state.clear()
+
+    keyboard = types.ReplyKeyboardMarkup(
+        keyboard=[
+            [
+                types.KeyboardButton(text="🍽️ Записать еду"),
+                types.KeyboardButton(text="📈 Прогресс"),
+            ],
+            [
+                types.KeyboardButton(text="👤 Мои данные"),
+            ],
+        ],
+        resize_keyboard=True,
+    )
 
     await message.answer(
         "Отлично! Регистрация завершена.\n\n"
         "Теперь можешь присылать мне фото еды или описывать "
         "свой приём пищи текстом.",
-        reply_markup=types.ReplyKeyboardRemove(),
+        reply_markup=keyboard,
     )
 
 
@@ -1183,10 +1196,7 @@ async def show_progress(message: types.Message):
             "Не получилось загрузить прогресс. Попробуй немного позже."
         )
 
-@router.message(
-    lambda message: bool(message.text)
-    and not message.text.startswith("/")
-)
+
 @router.message(lambda message: message.text == "👤 Мои данные")
 async def show_profile(message: types.Message, state: FSMContext):
     telegram_user = message.from_user
@@ -1315,6 +1325,15 @@ async def start_weight_edit(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
+@router.message(
+    lambda message: bool(message.text)
+    and not message.text.startswith("/")
+    and message.text not in (
+        "🍽️ Записать еду",
+        "📈 Прогресс",
+        "👤 Мои данные",
+    )
+)
 async def process_food_text(message: types.Message, state: FSMContext):
     if await state.get_state() is not None:
         await message.answer(
