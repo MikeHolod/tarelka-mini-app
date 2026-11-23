@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import time
 from urllib.parse import parse_qsl
 
@@ -1030,6 +1031,25 @@ async def process_food_photo(message: types.Message, state: FSMContext):
 
             "Оценка должна соответствовать твоему анализу и быть обоснована "
             "кратким объяснением. Не используй дробные оценки."
+            
+            "Если ты не уверен в распознавании блюда или его ингредиентов, "
+            "обязательно обозначь это. Не выдавай предположение за факт. "
+            "Попроси пользователя уточнить состав или предложи написать его "
+            "текстом. Например: «Я могу ошибаться в распознавании. "
+            "Если я ошибся, напиши, пожалуйста, что входит в состав блюда, "
+            "и я уточню оценку». "
+
+            "Оценивай реальный состав блюда, а не только наличие белков "
+            "и углеводов. Учитывай примерное соотношение компонентов. "
+            "Если значительную часть блюда составляют жирный сыр, "
+            "масляные соусы или мучные изделия, учитывай это при оценке "
+            "и объясняй, какие есть пищевые компромиссы. Не называй блюдо "
+            "сбалансированным только потому, что в нём есть белок. "
+
+            "При этом не делай выводов о точном количестве жира, масла, "
+            "калорий или размере порции, если этого нельзя определить "
+            "по фотографии. Если состав неизвестен, сначала уточни его."
+
 
         )
 
@@ -1059,6 +1079,21 @@ async def process_food_photo(message: types.Message, state: FSMContext):
         )
 
         analysis = response.output_text
+
+        if not analysis:
+            raise ValueError("Empty AI response")
+
+        score_match = re.search(
+            r"Оценка\s*:\s*(10|[1-9])\s*/\s*10",
+            analysis,
+            re.IGNORECASE,
+        )
+
+        balance_score = (
+            int(score_match.group(1))
+            if score_match
+            else None
+        )
 
     except Exception as exc:
         print(
@@ -1108,13 +1143,15 @@ async def process_food_photo(message: types.Message, state: FSMContext):
                 )
                 values (%s, %s, %s, %s, %s)
                 """,
+                
                 (
                     user_id,
                     photo_path,
                     Jsonb({"text": analysis}),
-                    None,
+                    balance_score,
                     analysis,
                 ),
+
             )
 
         await message.answer(analysis)
