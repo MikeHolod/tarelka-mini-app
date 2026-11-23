@@ -1094,7 +1094,12 @@ async def process_food_photo(message: types.Message, state: FSMContext):
             if score_match
             else None
         )
-
+        print(
+            f"Food score debug: "
+            f"match={score_match.group(0) if score_match else None!r}, "
+            f"balance_score={balance_score!r}",
+            flush=True,
+        )
     except Exception as exc:
         print(
             f"Bot food analysis error: {type(exc).__name__}: {exc}",
