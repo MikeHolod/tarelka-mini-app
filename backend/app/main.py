@@ -1056,7 +1056,6 @@ async def process_food_photo(message: types.Message, state: FSMContext):
 
 
 
-        )
 
         client = OpenAI(api_key=OPENAI_API_KEY)
 
