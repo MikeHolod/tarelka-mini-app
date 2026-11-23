@@ -1093,7 +1093,7 @@ async def process_food_photo(message: types.Message, state: FSMContext):
             re.IGNORECASE,
         )
 
-                balance_score = (
+        balance_score = (
             int(score_match.group(1))
             if score_match
             else None
