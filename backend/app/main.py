@@ -1626,7 +1626,7 @@ CLARIFY — намерение действительно непонятно.
 Не добавляй пояснений, только одно слово.
 """,
             input=classification_input,
-            max_output_tokens=10,
+            max_output_tokens=16,
         )
 
         intent = classification.output_text.strip().upper()
