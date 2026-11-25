@@ -1564,7 +1564,104 @@ async def process_food_text(message: types.Message, state: FSMContext):
         )
         return
 
-    food_text = message.text.strip()
+    
+    user_text = message.text.strip()
+
+    if not user_text:
+        return
+
+    if len(user_text) > 3000:
+        await message.answer(
+            "Сообщение получилось слишком длинным. "
+            "Попробуй сократить его до 3000 символов."
+        )
+        return
+
+    try:
+        with db_connect() as conn:
+            history = conn.execute(
+                """
+                select role, content
+                from public.telegram_chat_message
+                where telegram_id = %s
+                order by created_at desc, id desc
+                limit 8
+                """,
+                (message.from_user.id,),
+            ).fetchall()
+
+        classification_input = [
+            {
+                "role": item["role"],
+                "content": item["content"],
+            }
+            for item in reversed(history)
+        ]
+
+        classification_input.append({
+            "role": "user",
+            "content": user_text,
+        })
+
+        classifier = OpenAI(api_key=OPENAI_API_KEY)
+
+        classification = classifier.responses.create(
+            model="gpt-4o-mini",
+            instructions="""
+Определи намерение пользователя в последнем сообщении.
+
+Верни строго одно слово:
+
+FOOD — пользователь сообщает, что он съел или выпил,
+и хочет записать этот приём пищи.
+
+CHAT — пользователь задаёт вопрос, обсуждает питание,
+просит совет, делится переживаниями или продолжает разговор.
+
+CLARIFY — намерение действительно непонятно.
+
+Учитывай историю диалога.
+Не считай каждое упоминание еды намерением её записать.
+Если пользователь задаёт вопрос о блюде — это CHAT.
+Не добавляй пояснений, только одно слово.
+""",
+            input=classification_input,
+            max_output_tokens=10,
+        )
+
+        intent = classification.output_text.strip().upper()
+
+    except Exception as exc:
+        print(
+            f"Intent classification error: {type(exc).__name__}: {exc}",
+            flush=True,
+        )
+        await message.answer(
+            "Не получилось определить, что ты хотел сказать. "
+            "Попробуй ещё раз."
+        )
+        return
+
+    if intent == "CHAT":
+        await process_nutrition_chat(message, user_text)
+        return
+
+    if intent == "CLARIFY":
+        await message.answer(
+            "Хочу правильно тебя понять 🙂 "
+            "Ты хочешь записать приём пищи или задать вопрос "
+            "о питании?"
+        )
+        return
+
+    if intent != "FOOD":
+        await message.answer(
+            "Не совсем понял твоё сообщение. Попробуй сформулировать иначе."
+        )
+        return
+
+    food_text = user_text
+
 
     if not food_text:
         return
