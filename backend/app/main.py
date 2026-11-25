@@ -1421,6 +1421,132 @@ async def start_weight_edit(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
+async def process_nutrition_chat(message: types.Message, user_text: str):
+    telegram_user = message.from_user
+
+    if telegram_user is None:
+        return
+
+    if not OPENAI_API_KEY:
+        await message.answer(
+            "Сейчас не могу ответить. Попробуй немного позже."
+        )
+        return
+
+    try:
+        # Проверяем, что пользователь зарегистрирован,
+        # и загружаем последние сообщения диалога.
+        with db_connect() as conn:
+            db_user = conn.execute(
+                """
+                select id
+                from public.app_user
+                where telegram_id = %s
+                """,
+                (telegram_user.id,),
+            ).fetchone()
+
+            if db_user is None:
+                await message.answer(
+                    "Сначала зарегистрируйся с помощью команды /start."
+                )
+                return
+
+            history = conn.execute(
+                """
+                select role, content
+                from public.telegram_chat_message
+                where telegram_id = %s
+                order by created_at desc, id desc
+                limit 12
+                """,
+                (telegram_user.id,),
+            ).fetchall()
+
+            conn.execute(
+                """
+                insert into public.telegram_chat_message
+                    (telegram_id, role, content)
+                values (%s, 'user', %s)
+                """,
+                (telegram_user.id, user_text),
+            )
+
+        # Восстанавливаем сообщения в правильном порядке.
+        conversation = [
+            {
+                "role": item["role"],
+                "content": item["content"],
+            }
+            for item in reversed(history)
+        ]
+
+        conversation.append({
+            "role": "user",
+            "content": user_text,
+        })
+
+        instructions = """
+Ты — персональный помощник по питанию приложения «Тарелка».
+
+Общайся на русском языке, обращайся к пользователю на «ты».
+Будь дружелюбным, внимательным и естественным.
+Поддерживай полноценный диалог, помни предыдущие сообщения
+и учитывай контекст разговора.
+
+Помогай разбираться в питании, составе продуктов,
+балансе рациона и пищевых привычках.
+
+Не выдумывай данные о пользователе, его рационе,
+весе, калорийности или составе блюд.
+Если информации недостаточно — задай уточняющий вопрос.
+
+Не морализируй, не ругай пользователя и не называй еду плохой.
+Не давай шаблонных советов, которые не относятся к вопросу.
+
+Не представляй себя врачом и не ставь диагнозы.
+Если вопрос требует медицинской оценки, рекомендуй
+обратиться к соответствующему специалисту.
+
+Отвечай понятно и по существу.
+"""
+
+        client = OpenAI(api_key=OPENAI_API_KEY)
+
+        response = client.responses.create(
+            model="gpt-4o-mini",
+            instructions=instructions,
+            input=conversation,
+            max_output_tokens=700,
+        )
+
+        answer = response.output_text
+
+        if not answer:
+            raise ValueError("Empty AI response")
+
+        # Сохраняем ответ ассистента в историю.
+        with db_connect() as conn:
+            conn.execute(
+                """
+                insert into public.telegram_chat_message
+                    (telegram_id, role, content)
+                values (%s, 'assistant', %s)
+                """,
+                (telegram_user.id, answer),
+            )
+
+        await message.answer(answer)
+
+    except Exception as exc:
+        print(
+            f"Nutrition chat error: {type(exc).__name__}: {exc}",
+            flush=True,
+        )
+        await message.answer(
+            "Не получилось ответить. Попробуй отправить сообщение ещё раз."
+        )
+
 @router.message(
     lambda message: bool(message.text)
     and not message.text.startswith("/")
