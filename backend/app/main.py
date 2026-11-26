@@ -930,160 +930,403 @@ async def process_measurements(message: types.Message, state: FSMContext):
     )
 
 
-@router.message(lambda message: bool(message.photo))
-async def process_food_photo(message: types.Message, state: FSMContext):
-    if await state.get_state() is not None:
-        await message.answer(
-            "Сначала закончи регистрацию, пожалуйста. "
-            "После этого сможешь отправлять фото еды."
+
+FOOD_ANALYSIS_PROMPT = 'Ты — нутрициологический помощник приложения «Тарелка». Анализируй именно описанное или изображённое блюдо и отвечай по-русски, на «ты», спокойно и доброжелательно.\n\nСначала определи тип блюда: основное блюдо, суп, салат, гарнир, перекус, десерт, суши/роллы, бургер, пицца или другое. Оценивай с учётом назначения блюда и контекста. Не требуй, чтобы каждое блюдо соответствовало принципу Гарвардской тарелки: используй его только как ориентир для обычных основных приёмов пищи.\n\nОписывай только продукты и компоненты, которые можно достаточно уверенно распознать. Не додумывай скрытые ингредиенты, состав соуса, способ приготовления, точный вес порции, калорийность или БЖУ. Если сомневаешься, прямо обозначь это и предложи пользователю уточнить состав.\n\nВ начале ответа обязательно укажи честную оценку целым числом от 1 до 10 отдельной строкой: «Оценка: 8/10». Оценивай качество состава с учётом типа блюда. Не снижай оценку десерту за отсутствие овощей или белка; не занижай её только из-за теста, сыра, риса или сахара.\n\nНе предлагай автоматически добавлять фрукты к основным блюдам. Не требуй овощи к каждой пицце или бургеру. Не придумывай рекомендации ради рекомендации. Если есть конкретное реалистичное улучшение — предложи одно. Если существенных изменений не требуется, так и скажи.\n\nНачинай с оценки и сути. Не морализируй, не ругай пользователя, не называй еду плохой. Отвечай коротко, конкретно и естественно.'
+
+
+def _nutrition_value(value):
+    """Convert database values (including JSONB) into compact readable text."""
+    if value is None:
+        return ""
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False, default=str)
+    return str(value)
+
+
+def load_nutrition_context(conn, telegram_id: int):
+    """Load the Telegram user's profile and recent food diary for the AI context."""
+    profile = conn.execute(
+        """
+        select id, gender, height_cm, initial_weight_kg,
+               current_weight_kg, target_weight_kg, goal
+        from public.app_user
+        where telegram_id = %s
+        """,
+        (telegram_id,),
+    ).fetchone()
+
+    if profile is None:
+        return None, []
+
+    food_entries = conn.execute(
+        """
+        select created_at, meal_type, detected_foods,
+               original_analysis, user_correction,
+               corrected_analysis, balance_score, ai_comment
+        from public.food_entry
+        where user_id = %s
+        order by created_at desc
+        limit 8
+        """,
+        (profile["id"],),
+    ).fetchall()
+
+    return profile, food_entries
+
+
+def build_nutrition_context(profile, food_entries):
+    """Build factual context without inventing missing profile or diary values."""
+    if profile is None:
+        return "Профиль пользователя не найден."
+
+    gender = {"male": "мужской", "female": "женский"}.get(
+        profile.get("gender"), "не указан"
+    )
+
+    profile_lines = [
+        f"Пол: {gender}",
+        f"Рост: {profile.get('height_cm') if profile.get('height_cm') is not None else 'не указан'} см",
+        f"Вес при регистрации: {profile.get('initial_weight_kg') if profile.get('initial_weight_kg') is not None else 'не указан'} кг",
+        f"Текущий вес в профиле: {profile.get('current_weight_kg') if profile.get('current_weight_kg') is not None else 'не указан'} кг",
+        f"Желаемый вес: {profile.get('target_weight_kg') if profile.get('target_weight_kg') is not None else 'не указан'} кг",
+        f"Цель: {profile.get('goal') or 'не указана'}",
+    ]
+
+    diary_lines = []
+    for entry in food_entries:
+        date = entry.get("created_at")
+        if date is not None:
+            date_text = date.strftime("%d.%m.%Y %H:%M") if hasattr(date, "strftime") else str(date)
+        else:
+            date_text = "дата не указана"
+
+        corrected = (
+            entry.get("corrected_analysis")
+            or entry.get("user_correction")
+            or entry.get("ai_comment")
+            or entry.get("original_analysis")
+            or entry.get("detected_foods")
         )
+        detail = _nutrition_value(corrected)
+        if len(detail) > 900:
+            detail = detail[:900] + "…"
+
+        score = entry.get("balance_score")
+        meal_type = entry.get("meal_type")
+        line = f"- {date_text}"
+        if meal_type:
+            line += f"; тип: {meal_type}"
+        if score is not None:
+            line += f"; оценка: {score}/10"
+        if detail:
+            line += f"; запись: {detail}"
+        diary_lines.append(line)
+
+    diary_text = "\n".join(diary_lines) if diary_lines else "Записей пока нет."
+
+    return (
+        "ДАННЫЕ ПРОФИЛЯ (используй только как контекст, не повторяй без необходимости):\n"
+        + "\n".join(profile_lines)
+        + "\n\nПОСЛЕДНИЕ ЗАПИСИ ДНЕВНИКА (это только сохранённые записи; не считай их полным рационом):\n"
+        + diary_text
+    )
+
+
+def save_telegram_chat_message(conn, telegram_id: int, role: str, content: str):
+    conn.execute(
+        """
+        insert into public.telegram_chat_message
+            (telegram_id, role, content)
+        values (%s, %s, %s)
+        """,
+        (telegram_id, role, content[:10000]),
+    )
+
+
+async def process_nutrition_chat(
+    message: types.Message,
+    user_text: str,
+    image_bytes: bytes | None = None,
+    image_content_type: str | None = None,
+):
+    telegram_user = message.from_user
+
+    if telegram_user is None:
         return
 
-    if not OPENAI_API_KEY or supabase is None:
-        await message.answer(
-            "Сервис анализа еды временно недоступен. Попробуй позже."
-        )
+    if not OPENAI_API_KEY:
+        await message.answer("Сейчас не могу ответить. Попробуй немного позже.")
         return
-
-    await message.answer("Фото получил! Сейчас рассмотрю твою тарелку.")
 
     try:
-        photo = message.photo[-1]
-        downloaded = await message.bot.download(photo.file_id)
+        with db_connect() as conn:
+            profile, food_entries = load_nutrition_context(conn, telegram_user.id)
 
-        if downloaded is None:
-            raise ValueError("Could not download Telegram photo")
+            if profile is None:
+                await message.answer(
+                    "Сначала зарегистрируйся с помощью команды /start."
+                )
+                return
 
-        image_bytes = downloaded.read()
+            history = conn.execute(
+                """
+                select role, content
+                from public.telegram_chat_message
+                where telegram_id = %s
+                order by created_at desc, id desc
+                limit 40
+                """,
+                (telegram_user.id,),
+            ).fetchall()
 
-        if not image_bytes:
-            raise ValueError("Empty photo")
+            save_telegram_chat_message(
+                conn,
+                telegram_user.id,
+                "user",
+                user_text or "[Пользователь отправил изображение]",
+            )
 
-        if len(image_bytes) > 10 * 1024 * 1024:
+        conversation = [
+            {"role": item["role"], "content": item["content"]}
+            for item in reversed(history)
+        ]
+
+        current_content = [{"type": "input_text", "text": user_text or (
+            "Пользователь прислал изображение. Если оно относится к питанию, "
+            "помоги разобраться в нём. Не выдумывай неразборчивые данные."
+        )}]
+
+        if image_bytes is not None and image_content_type:
+            encoded_image = base64.b64encode(image_bytes).decode("utf-8")
+            current_content.append({
+                "type": "input_image",
+                "image_url": f"data:{image_content_type};base64,{encoded_image}",
+                "detail": "auto",
+            })
+
+        conversation.append({"role": "user", "content": current_content})
+
+        context_text = build_nutrition_context(profile, food_entries)
+        instructions = """
+Ты — персональный помощник по питанию приложения «Тарелка».
+
+Общайся на русском языке, обращайся к пользователю на «ты».
+Будь дружелюбным, внимательным и естественным. Поддерживай полноценный
+долгосрочный диалог и учитывай предыдущие сообщения.
+
+Помогай разбираться в питании, составе продуктов, балансе рациона,
+пищевых привычках и данных дневника питания.
+
+У тебя есть контекст профиля и последние сохранённые записи дневника.
+Используй его, когда это действительно помогает ответить. Не выдавай
+несколько последних записей за полный рацион и не делай выводов о
+среднем потреблении калорий или БЖУ, если таких данных нет.
+
+Если пользователь прислал скриншот FatSecret или другого приложения
+питания, внимательно разбери только видимые данные: блюда, приёмы пищи,
+калории и БЖУ, если они читаются. Отделяй распознанные значения от
+неразборчивых или предположительных. Не додумывай цифры и состав.
+Сопоставляй скриншот с вопросом пользователя и предыдущим разговором.
+
+Скриншот стороннего приложения сам по себе НЕ является командой
+добавить еду в дневник «Тарелки». Не утверждай, что данные со скриншота
+сохранены в дневнике. Если пользователь прямо просит перенести или
+записать данные, сначала уточни необходимые детали.
+
+Не выдумывай данные о пользователе, его рационе, весе, калорийности
+или составе блюд. Если информации недостаточно — задай уточняющий вопрос.
+Не морализируй, не ругай пользователя и не называй еду плохой.
+Не давай шаблонных советов, которые не относятся к вопросу.
+
+Не представляй себя врачом и не ставь диагнозы. Если вопрос требует
+медицинской оценки, рекомендуй обратиться к специалисту.
+Отвечай понятно, по существу и с учётом контекста.
+""" + "\n\n" + context_text
+
+        client = OpenAI(api_key=OPENAI_API_KEY)
+        response = client.responses.create(
+            model="gpt-4o-mini",
+            instructions=instructions,
+            input=conversation,
+            max_output_tokens=900,
+        )
+
+        answer = response.output_text
+        if not answer:
+            raise ValueError("Empty AI response")
+
+        with db_connect() as conn:
+            save_telegram_chat_message(
+                conn, telegram_user.id, "assistant", answer
+            )
+
+        await message.answer(answer)
+
+    except Exception as exc:
+        print(
+            f"Nutrition chat error: {type(exc).__name__}: {exc}",
+            flush=True,
+        )
+        await message.answer(
+            "Не получилось ответить. Попробуй отправить сообщение ещё раз."
+        )
+
+
+@router.message(lambda message: bool(message.photo) or bool(message.document))
+async def process_bot_image(message: types.Message, state: FSMContext):
+    if await state.get_state() is not None:
+        await message.answer(
+            "Сначала закончи регистрацию, пожалуйста. После этого сможешь "
+            "отправлять фото еды и скриншоты дневника питания."
+        )
+        return
+
+    if not OPENAI_API_KEY:
+        await message.answer("Сервис анализа изображений временно недоступен. Попробуй позже.")
+        return
+
+    image_file_id = None
+    image_content_type = None
+    image_size = None
+
+    if message.photo:
+        image_file_id = message.photo[-1].file_id
+        image_content_type = "image/jpeg"
+        image_size = message.photo[-1].file_size
+    elif message.document:
+        document = message.document
+        image_file_id = document.file_id
+        image_content_type = (document.mime_type or "").lower()
+        image_size = document.file_size
+
+        if not image_content_type.startswith("image/"):
+            extension_to_mime = {
+                ".jpg": "image/jpeg",
+                ".jpeg": "image/jpeg",
+                ".png": "image/png",
+                ".webp": "image/webp",
+                ".gif": "image/gif",
+            }
+            filename = (document.file_name or "").lower()
+            image_content_type = next(
+                (mime for extension, mime in extension_to_mime.items()
+                 if filename.endswith(extension)),
+                image_content_type,
+            )
+
+        allowed_types = {
+            "image/jpeg", "image/png", "image/webp", "image/gif"
+        }
+        if image_content_type not in allowed_types:
             await message.answer(
-                "Фотография слишком большая. Попробуй отправить её ещё раз."
+                "Пока поддерживаю изображения JPG, PNG, WEBP и GIF. "
+                "Попробуй отправить скриншот в одном из этих форматов."
             )
             return
 
+    if image_size is not None and image_size > 10 * 1024 * 1024:
+        await message.answer("Изображение слишком большое. Максимальный размер — 10 МБ.")
+        return
+
+    await message.answer("Изображение получил, сейчас посмотрю.")
+
+    try:
+        downloaded = await message.bot.download(image_file_id)
+        if downloaded is None:
+            raise ValueError("Could not download Telegram image")
+
+        image_bytes = downloaded.read()
+        if not image_bytes:
+            raise ValueError("Empty image")
+        if len(image_bytes) > 10 * 1024 * 1024:
+            await message.answer("Изображение слишком большое. Максимальный размер — 10 МБ.")
+            return
+
+        caption = (message.caption or "").strip()
+        classifier_text = (
+            "Определи тип изображения. Верни строго одно значение: "
+            "MEAL_PHOTO — фотография готовой еды или продуктов; "
+            "NUTRITION_SCREENSHOT — скриншот приложения учёта питания, "
+            "дневника еды, калорий или БЖУ; "
+            "OTHER — всё остальное. Не объясняй ответ. "
+            f"Подпись пользователя: {caption or 'нет'}"
+        )
+
         encoded_image = base64.b64encode(image_bytes).decode("utf-8")
+        classifier = OpenAI(api_key=OPENAI_API_KEY)
+        classification = classifier.responses.create(
+            model="gpt-4o-mini",
+            input=[{
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": classifier_text},
+                    {
+                        "type": "input_image",
+                        "image_url": f"data:{image_content_type};base64,{encoded_image}",
+                        "detail": "auto",
+                    },
+                ],
+            }],
+            max_output_tokens=24,
+        )
 
-        
-        
-        prompt = """
-Ты — помощник приложения «Тарелка». Анализируй фотографию еды и отвечай исключительно на русском языке. Обращайся к пользователю на «ты», спокойно, доброжелательно и без морализаторства.
+        image_kind = (classification.output_text or "").strip().upper()
+        if "NUTRITION_SCREENSHOT" in image_kind:
+            image_kind = "NUTRITION_SCREENSHOT"
+        elif "MEAL_PHOTO" in image_kind:
+            image_kind = "MEAL_PHOTO"
+        else:
+            image_kind = "OTHER"
 
-ГЛАВНЫЙ ПРИНЦИП:
-Твоя задача — объективно оценить конкретное блюдо, а не искать, что в нём не так. Не пытайся искусственно улучшить каждую тарелку. Если существенных недостатков нет, прямо скажи об этом. Не придумывай рекомендации ради того, чтобы закончить ответ советом.
+        if image_kind == "NUTRITION_SCREENSHOT":
+            user_text = caption or (
+                "Посмотри, пожалуйста, этот скриншот дневника питания. "
+                "Разбери видимые блюда и показатели, оцени рацион и подскажи, "
+                "что можно понять по этим данным."
+            )
+            await process_nutrition_chat(
+                message,
+                user_text,
+                image_bytes=image_bytes,
+                image_content_type=image_content_type,
+            )
+            return
 
-1. ОПРЕДЕЛИ ТИП БЛЮДА
+        if image_kind != "MEAL_PHOTO":
+            await message.answer(
+                "Похоже, это не фото еды и не скриншот дневника питания. "
+                "Я лучше всего помогаю разбирать блюда и данные приложений питания."
+            )
+            return
 
-Сначала определи, что перед тобой: основное блюдо, суп, салат, гарнир, перекус, десерт, суши, роллы, бургер, пицца или другой вариант.
+        if supabase is None:
+            await message.answer(
+                "Сервис сохранения дневника временно недоступен. Попробуй позже."
+            )
+            return
 
-Оценивай еду с учётом её назначения и контекста:
-- пасту оценивай как блюдо из пасты;
-- пиццу — как пиццу;
-- бургер — как бургер;
-- суши и роллы — как самостоятельный приём пищи или его часть;
-- десерт — как десерт, а не как полноценный обед.
-
-Не требуй, чтобы каждое блюдо соответствовало принципу Гарвардской тарелки. Используй его как ориентир для обычных основных приёмов пищи, но не как универсальный стандарт.
-
-2. АНАЛИЗИРУЙ РЕАЛЬНЫЙ СОСТАВ
-
-Учитывай продукты, которые действительно различимы на фотографии, и примерное соотношение компонентов.
-
-Обращай внимание на:
-- источники белка;
-- овощи и другие растительные компоненты, если они присутствуют;
-- основные источники углеводов;
-- заметное количество сыра, жирных соусов и других жирных компонентов;
-- особенности приготовления, только если их можно определить.
-
-Не считай блюдо сбалансированным только из-за наличия белка. Но и не считай его плохим только из-за наличия теста, сыра, риса или других углеводных продуктов.
-
-Не делай выводов о точном количестве калорий, жиров, масла, весе порции или БЖУ по фотографии.
-
-3. НЕ ПРИДУМЫВАЙ ИНГРЕДИЕНТЫ
-
-Описывай только то, что можно достаточно уверенно определить по изображению.
-
-Не додумывай скрытые ингредиенты, состав соуса, способ приготовления и свойства продуктов. Например, не утверждай, что хлеб цельнозерновой, если это невозможно определить.
-
-Если не уверен в распознавании блюда или ингредиентов, обязательно обозначь сомнение. Не выдавай предположение за факт.
-
-В таком случае предложи пользователю уточнить состав. Например:
-«Я могу ошибаться в распознавании. Если я ошибся, напиши, пожалуйста, что входит в состав блюда, и я уточню оценку».
-
-4. СТАВЬ ЧЕСТНУЮ ОЦЕНКУ
-
-В начале ответа обязательно укажи оценку отдельной строкой в формате:
-Оценка: 8/10
-
-Используй целые числа от 1 до 10.
-
-Оценивай качество состава с точки зрения питания, учитывая тип блюда, его назначение и примерные пропорции компонентов.
-
-Не завышай оценку только из-за наличия белка или овощей. Не занижай её только потому, что блюдо содержит сахар, тесто, сыр или другие продукты, которые сами по себе не делают блюдо неудачным.
-
-Десерты оценивай в контексте десертов. Не снижай им оценку за отсутствие овощей или белка.
-
-Оценка должна соответствовать описанию и объяснению. Не нужно стремиться ставить высокую оценку каждому блюду.
-
-5. РЕКОМЕНДАЦИИ — ТОЛЬКО ЕСЛИ ОНИ ДЕЙСТВИТЕЛЬНО НУЖНЫ
-
-Не предлагай автоматически:
-- добавлять овощи или салат к каждому основному блюду;
-- добавлять фрукты к основному блюду или десерту;
-- добавлять белок к блюду только ради соответствия шаблону;
-- заменять привычные продукты на цельнозерновые без конкретной причины.
-
-Не предлагай овощи к пицце или бургеру просто потому, что их нет на фотографии.
-
-Если у блюда есть конкретный недостаток, объясни его и предложи одно реалистичное улучшение, которое действительно имеет смысл.
-
-Если существенных изменений не требуется, так и скажи. Не нужно придумывать совет.
-
-6. СТИЛЬ ОТВЕТА
-
-Начинай сразу с оценки и сути анализа.
-Не пересказывай подробно то, что и так очевидно на фотографии.
-Объясняй оценку коротко и конкретно.
-Не используй шаблонные вступления, случайные шутки, канцелярские формулировки и длинные рассуждения.
-Не ругай пользователя и не оценивай его самого.
-
-Ответ должен быть естественным, полезным и достаточно кратким.
-"""
-
-
-
+        prompt = FOOD_ANALYSIS_PROMPT
+        if caption:
+            prompt += "\\n\\nКомментарий пользователя к фотографии: " + caption
 
         client = OpenAI(api_key=OPENAI_API_KEY)
-
         response = client.responses.create(
             model="gpt-4o-mini",
-            input=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "input_text",
-                            "text": prompt,
-                        },
-                        {
-                            "type": "input_image",
-                            "image_url": (
-                                f"data:image/jpeg;base64,{encoded_image}"
-                            ),
-                            "detail": "auto",
-                        },
-                    ],
-                }
-            ],
-            max_output_tokens=500,
+            input=[{
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": prompt},
+                    {
+                        "type": "input_image",
+                        "image_url": f"data:{image_content_type};base64,{encoded_image}",
+                        "detail": "auto",
+                    },
+                ],
+            }],
+            max_output_tokens=550,
         )
 
         analysis = response.output_text
-
         if not analysis:
             raise ValueError("Empty AI response")
 
@@ -1092,21 +1335,16 @@ async def process_food_photo(message: types.Message, state: FSMContext):
             analysis,
             re.IGNORECASE,
         )
-
-        balance_score = (
-            int(score_match.group(1))
-            if score_match
-            else None
-        )
+        balance_score = int(score_match.group(1)) if score_match else None
 
     except Exception as exc:
         print(
-            f"Bot food analysis error: {type(exc).__name__}: {exc}",
+            f"Bot image analysis error: {type(exc).__name__}: {exc}",
             flush=True,
         )
         await message.answer(
-            "Не получилось проанализировать фотографию. "
-            "Попробуй отправить её ещё раз."
+            "Не получилось разобрать изображение. Попробуй отправить его ещё раз "
+            "или опиши содержимое текстом."
         )
         return
 
@@ -1114,6 +1352,15 @@ async def process_food_photo(message: types.Message, state: FSMContext):
         import uuid
 
         telegram_user = message.from_user
+        if telegram_user is None:
+            return
+
+        extension = {
+            "image/jpeg": "jpg",
+            "image/png": "png",
+            "image/webp": "webp",
+            "image/gif": "gif",
+        }[image_content_type]
 
         with db_connect() as conn:
             db_user = conn.execute(
@@ -1122,32 +1369,25 @@ async def process_food_photo(message: types.Message, state: FSMContext):
             ).fetchone()
 
             if db_user is None:
-                await message.answer(
-                    "Сначала зарегистрируйся с помощью команды /start."
-                )
+                await message.answer("Сначала зарегистрируйся с помощью команды /start.")
                 return
 
             user_id = db_user["id"]
-            photo_path = f"{user_id}/{uuid.uuid4()}.jpg"
+            photo_path = f"{user_id}/{uuid.uuid4()}.{extension}"
 
             supabase.storage.from_("food-photos").upload(
                 photo_path,
                 image_bytes,
-                {"content-type": "image/jpeg"},
+                {"content-type": image_content_type},
             )
 
             conn.execute(
                 """
                 insert into public.food_entry (
-                    user_id,
-                    photo_url,
-                    original_analysis,
-                    balance_score,
-                    ai_comment
+                    user_id, photo_url, original_analysis, balance_score, ai_comment
                 )
                 values (%s, %s, %s, %s, %s)
                 """,
-                
                 (
                     user_id,
                     photo_path,
@@ -1155,20 +1395,28 @@ async def process_food_photo(message: types.Message, state: FSMContext):
                     balance_score,
                     analysis,
                 ),
+            )
 
+            history_user_text = caption or "[Пользователь отправил фото приёма пищи]"
+            save_telegram_chat_message(
+                conn, telegram_user.id, "user", history_user_text
+            )
+            save_telegram_chat_message(
+                conn, telegram_user.id, "assistant", analysis
             )
 
         await message.answer(analysis)
 
     except Exception as exc:
         print(
-            f"Bot food save error: {type(exc).__name__}: {exc}",
+            f"Bot food image save error: {type(exc).__name__}: {exc}",
             flush=True,
         )
         await message.answer(
-            "Анализ готов, но не удалось сохранить его в дневник. "
-            "Попробуй позже."
+            "Анализ готов, но не удалось сохранить его в дневник. Попробуй позже."
         )
+
+
 @router.message(lambda message: message.text == "🍽️ Записать еду")
 async def start_food_entry(message: types.Message):
     await message.answer(
@@ -1421,132 +1669,6 @@ async def start_weight_edit(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-async def process_nutrition_chat(message: types.Message, user_text: str):
-    telegram_user = message.from_user
-
-    if telegram_user is None:
-        return
-
-    if not OPENAI_API_KEY:
-        await message.answer(
-            "Сейчас не могу ответить. Попробуй немного позже."
-        )
-        return
-
-    try:
-        # Проверяем, что пользователь зарегистрирован,
-        # и загружаем последние сообщения диалога.
-        with db_connect() as conn:
-            db_user = conn.execute(
-                """
-                select id
-                from public.app_user
-                where telegram_id = %s
-                """,
-                (telegram_user.id,),
-            ).fetchone()
-
-            if db_user is None:
-                await message.answer(
-                    "Сначала зарегистрируйся с помощью команды /start."
-                )
-                return
-
-            history = conn.execute(
-                """
-                select role, content
-                from public.telegram_chat_message
-                where telegram_id = %s
-                order by created_at desc, id desc
-                limit 12
-                """,
-                (telegram_user.id,),
-            ).fetchall()
-
-            conn.execute(
-                """
-                insert into public.telegram_chat_message
-                    (telegram_id, role, content)
-                values (%s, 'user', %s)
-                """,
-                (telegram_user.id, user_text),
-            )
-
-        # Восстанавливаем сообщения в правильном порядке.
-        conversation = [
-            {
-                "role": item["role"],
-                "content": item["content"],
-            }
-            for item in reversed(history)
-        ]
-
-        conversation.append({
-            "role": "user",
-            "content": user_text,
-        })
-
-        instructions = """
-Ты — персональный помощник по питанию приложения «Тарелка».
-
-Общайся на русском языке, обращайся к пользователю на «ты».
-Будь дружелюбным, внимательным и естественным.
-Поддерживай полноценный диалог, помни предыдущие сообщения
-и учитывай контекст разговора.
-
-Помогай разбираться в питании, составе продуктов,
-балансе рациона и пищевых привычках.
-
-Не выдумывай данные о пользователе, его рационе,
-весе, калорийности или составе блюд.
-Если информации недостаточно — задай уточняющий вопрос.
-
-Не морализируй, не ругай пользователя и не называй еду плохой.
-Не давай шаблонных советов, которые не относятся к вопросу.
-
-Не представляй себя врачом и не ставь диагнозы.
-Если вопрос требует медицинской оценки, рекомендуй
-обратиться к соответствующему специалисту.
-
-Отвечай понятно и по существу.
-"""
-
-        client = OpenAI(api_key=OPENAI_API_KEY)
-
-        response = client.responses.create(
-            model="gpt-4o-mini",
-            instructions=instructions,
-            input=conversation,
-            max_output_tokens=700,
-        )
-
-        answer = response.output_text
-
-        if not answer:
-            raise ValueError("Empty AI response")
-
-        # Сохраняем ответ ассистента в историю.
-        with db_connect() as conn:
-            conn.execute(
-                """
-                insert into public.telegram_chat_message
-                    (telegram_id, role, content)
-                values (%s, 'assistant', %s)
-                """,
-                (telegram_user.id, answer),
-            )
-
-        await message.answer(answer)
-
-    except Exception as exc:
-        print(
-            f"Nutrition chat error: {type(exc).__name__}: {exc}",
-            flush=True,
-        )
-        await message.answer(
-            "Не получилось ответить. Попробуй отправить сообщение ещё раз."
-        )
-
 @router.message(
     lambda message: bool(message.text)
     and not message.text.startswith("/")
@@ -1682,38 +1804,7 @@ CLARIFY — намерение действительно непонятно.
     await message.answer("Принял! Сейчас разберусь, что у тебя было на тарелке.")
 
     try:
-        prompt = (
-            "Ты — дружелюбный помощник приложения «Тарелка». "
-            "Твоя задача — анализировать питание по описанию пользователя. "
-            "Отвечай исключительно по-русски, коротко и доброжелательно. "
-
-            "Сначала определи тип приёма пищи: суп, салат, основное блюдо, "
-            "гарнир, перекус, десерт или другой вариант. "
-
-            "Учитывай особенности конкретного блюда. "
-            "Не пытайся применять пропорции Гарвардской тарелки буквально "
-            "к супам, напиткам, десертам и другим блюдам, для которых "
-            "это неприменимо. "
-
-            "Для обычного основного блюда ориентируйся на принцип "
-            "Гарвардской тарелки: примерно половина — овощи и фрукты, "
-            "четверть — источники белка, четверть — цельнозерновые "
-            "продукты или другие подходящие источники сложных углеводов. "
-
-            "Оцени, что в блюде хорошо с точки зрения баланса питания "
-            "и что можно улучшить. "
-            "Предлагай конкретные и уместные рекомендации, "
-            "а не случайные продукты. "
-
-            "Не выдумывай ингредиенты, количество еды и способ приготовления, "
-            "если пользователь их не указал. "
-            "Не утверждай, что знаешь точную калорийность или вес порции. "
-            "Если информации недостаточно, прямо скажи об этом. "
-
-            "Не ругай пользователя и не оценивай еду как плохую или хорошую. "
-            "Избегай шаблонных вступлений и длинных рассуждений. "
-            "Дай понятный и полезный ответ."
-        )
+        prompt = FOOD_ANALYSIS_PROMPT
 
         client = OpenAI(api_key=OPENAI_API_KEY)
 
@@ -1740,6 +1831,13 @@ CLARIFY — намерение действительно непонятно.
 
         if not analysis:
             raise ValueError("Empty AI response")
+
+        score_match = re.search(
+            r"Оценка\s*:\s*(10|[1-9])\s*/\s*10",
+            analysis,
+            re.IGNORECASE,
+        )
+        balance_score = int(score_match.group(1)) if score_match else None
 
     except Exception as exc:
         print(
@@ -1784,9 +1882,16 @@ CLARIFY — намерение действительно непонятно.
                     user_id,
                     Jsonb({"user_description": food_text}),
                     Jsonb({"text": analysis}),
-                    None,
+                    balance_score,
                     analysis,
                 ),
+            )
+
+            save_telegram_chat_message(
+                conn, telegram_user.id, "user", food_text
+            )
+            save_telegram_chat_message(
+                conn, telegram_user.id, "assistant", analysis
             )
 
         await message.answer(analysis)
