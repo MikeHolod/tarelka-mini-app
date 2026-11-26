@@ -1679,12 +1679,19 @@ async def start_weight_edit(callback: types.CallbackQuery, state: FSMContext):
     )
 )
 async def process_food_text(message: types.Message, state: FSMContext):
+
     if await state.get_state() is not None:
         await message.answer(
             "Сначала закончи регистрацию, пожалуйста. "
             "После этого сможешь записывать еду."
         )
         return
+
+    user_text = (message.text or "").strip()
+
+    if not user_text:
+        return
+
     profile_question = re.search(
         r"(обо мне|мои данные|мой профиль|сохран[её]нн\w+ данн|"
         r"какой у меня (рост|вес|пол|цель)|"
@@ -1695,11 +1702,6 @@ async def process_food_text(message: types.Message, state: FSMContext):
     if profile_question:
         await show_profile(message, state)
         return
-    
-    user_text = message.text.strip()
-
-    if not user_text:
-        return
 
     if len(user_text) > 3000:
         await message.answer(
@@ -1707,6 +1709,7 @@ async def process_food_text(message: types.Message, state: FSMContext):
             "Попробуй сократить его до 3000 символов."
         )
         return
+
 
     try:
         with db_connect() as conn:
