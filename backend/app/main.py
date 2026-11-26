@@ -1685,7 +1685,16 @@ async def process_food_text(message: types.Message, state: FSMContext):
             "После этого сможешь записывать еду."
         )
         return
+    profile_question = re.search(
+        r"(обо мне|мои данные|мой профиль|сохран[её]нн\w+ данн|"
+        r"какой у меня (рост|вес|пол|цель)|"
+        r"сколько я вешу|мой рост|мой вес|моя цель)",
+        user_text.lower(),
+    )
 
+    if profile_question:
+        await show_profile(message, state)
+        return
     
     user_text = message.text.strip()
 
@@ -1758,28 +1767,13 @@ CLARIFY — намерение действительно непонятно.
             f"Intent classification error: {type(exc).__name__}: {exc}",
             flush=True,
         )
-        await message.answer(
-            "Не получилось определить, что ты хотел сказать. "
-            "Попробуй ещё раз."
-        )
-        return
-
-    if intent == "CHAT":
         await process_nutrition_chat(message, user_text)
         return
 
-    if intent == "CLARIFY":
-        await message.answer(
-            "Хочу правильно тебя понять 🙂 "
-            "Ты хочешь записать приём пищи или задать вопрос "
-            "о питании?"
-        )
-        return
-
-    if intent != "FOOD":
-        await message.answer(
-            "Не совсем понял твоё сообщение. Попробуй сформулировать иначе."
-        )
+    if intent.strip().upper().startswith("FOOD"):
+        pass
+    else:
+        await process_nutrition_chat(message, user_text)
         return
 
     food_text = user_text
