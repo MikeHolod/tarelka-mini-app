@@ -1235,11 +1235,54 @@ def _format_import_date(value):
         return str(value or "не определена")
 
 
+def _format_macro_value(value):
+    if value is None or value == "":
+        return None
+    try:
+        number = float(value)
+        return str(int(number)) if number.is_integer() else str(round(number, 2)).replace(".", ",")
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _food_field(food, *names):
+    for name in names:
+        if isinstance(food, dict) and food.get(name) is not None:
+            return food.get(name)
+    return None
+
+
+def _meal_food_totals(meal):
+    foods = meal.get("foods") or []
+    if not isinstance(foods, list) or not foods or not all(isinstance(item, dict) for item in foods):
+        return None
+    totals = {"calories": 0.0, "protein_g": 0.0, "fat_g": 0.0, "carbs_g": 0.0}
+    seen = {key: False for key in totals}
+    for food in foods:
+        aliases = {
+            "calories": ("calories", "kcal"),
+            "protein_g": ("protein_g", "protein*g", "protein", "proteins"),
+            "fat_g": ("fat_g", "fat*g", "fat", "fats"),
+            "carbs_g": ("carbs_g", "carbs*g", "carbs", "carbohydrates"),
+        }
+        for key, names in aliases.items():
+            value = _food_field(food, *names)
+            if value is not None:
+                try:
+                    totals[key] += float(value)
+                    seen[key] = True
+                except (TypeError, ValueError):
+                    pass
+    return {key: (round(value, 2) if seen[key] else None) for key, value in totals.items()}
+
+
 def _render_import_preview(data):
     selected_date = data.get("date") or _moscow_today()
     date_source = data.get("date_source", "today_fallback")
     if date_source == "screenshot":
-        date_note = "Дата распознана на скриншоте."
+        date_note = "Дата и год распознаны на скриншоте."
+    elif date_source == "screenshot_no_year":
+        date_note = f"На скриншоте год не указан — использую текущий год ({date.fromisoformat(selected_date).year})."
     elif date_source == "user":
         date_note = "Дату исправили по твоему сообщению."
     else:
@@ -1263,20 +1306,76 @@ def _render_import_preview(data):
         lines.append(heading)
         values = []
         for key, label in (("calories", "ккал"), ("protein_g", "белки"), ("fat_g", "жиры"), ("carbs_g", "углеводы")):
-            value = meal.get(key)
+            value = _format_macro_value(meal.get(key))
             if value is not None:
                 values.append(f"{label}: {value}" if key == "calories" else f"{label}: {value} г")
         if values:
-            lines.append("   " + " · ".join(values))
-        foods = meal.get("foods")
+            lines.append("   Итог приёма: " + " · ".join(values))
+        foods = meal.get("foods") or []
         if foods:
-            lines.append("   Состав: " + ", ".join(str(x) for x in foods))
+            lines.append("   **Продукты:**")
+            for food in foods:
+                if isinstance(food, dict):
+                    food_name = _food_field(food, "name", "title") or "Продукт без названия"
+                    food_values = []
+                    for key, label, aliases in (
+                        ("calories", "ккал", ("calories", "kcal")),
+                        ("protein_g", "Б", ("protein_g", "protein*g", "protein", "proteins")),
+                        ("fat_g", "Ж", ("fat_g", "fat*g", "fat", "fats")),
+                        ("carbs_g", "У", ("carbs_g", "carbs*g", "carbs", "carbohydrates")),
+                    ):
+                        value = _format_macro_value(_food_field(food, *aliases))
+                        if value is not None:
+                            food_values.append(f"{label} {value}" + (" г" if key != "calories" else ""))
+                    lines.append("   • " + str(food_name) + (" — " + ", ".join(food_values) if food_values else ""))
+                else:
+                    lines.append("   • " + str(food))
+        totals = _meal_food_totals(meal)
+        meal_calories = meal.get("calories")
+        if totals and meal_calories is not None and totals.get("calories") is not None:
+            try:
+                difference = round(float(meal_calories) - totals["calories"])
+                if abs(difference) > 5:
+                    lines.append(f"   ⚠️ Проверка: сумма калорий продуктов — {round(totals['calories'])} ккал, итог приёма — {round(float(meal_calories))} ккал. Разница {difference:+d} ккал. Нужно уточнить источник расхождения.")
+            except (TypeError, ValueError):
+                pass
         if meal.get("uncertainty"):
             lines.append("   ⚠️ Не уверен: " + str(meal["uncertainty"]))
     if data.get("period_note"):
         lines.extend(["", str(data["period_note"])])
-    lines.extend(["", "Проверь дату и распознанные данные. Напиши, что исправить, или ответь **«Да»**, если всё верно. До подтверждения я ничего не сохраняю."])
+    lines.extend(["", "Проверь дату, продукты и значения. Напиши, что исправить, или ответь **«Да»**, если всё верно. До подтверждения я ничего не сохраняю."])
     return "\n".join(lines)
+
+
+def _normalize_import_dates(data):
+    """Use Moscow's current year when the screenshot shows day/month but no year."""
+    today = date.fromisoformat(_moscow_today())
+    raw_date = data.get("date")
+    year_visible = data.get("date_year_visible")
+    if raw_date:
+        parsed = date.fromisoformat(str(raw_date)).replace(year=today.year) if year_visible is False else date.fromisoformat(str(raw_date))
+        data["date"] = parsed.isoformat()
+        if year_visible is False and data.get("date_source") != "user":
+            data["date_source"] = "screenshot_no_year"
+        elif data.get("date_source") not in {"user", "today_fallback"}:
+            data["date_source"] = "screenshot"
+    else:
+        data["date"] = today.isoformat()
+        if data.get("date_source") != "user":
+            data["date_source"] = "today_fallback"
+    for meal in data.get("meals") or []:
+        if not isinstance(meal, dict):
+            continue
+        meal_raw_date = meal.get("date")
+        meal_year_visible = meal.get("date_year_visible", year_visible)
+        if meal_raw_date:
+            parsed_meal_date = date.fromisoformat(str(meal_raw_date))
+            if meal_year_visible is False:
+                parsed_meal_date = parsed_meal_date.replace(year=today.year)
+            meal["date"] = parsed_meal_date.isoformat()
+        else:
+            meal["date"] = data["date"]
+    return data
 
 
 def _extract_json(text):
@@ -1309,14 +1408,21 @@ async def begin_screenshot_import(message, image_bytes, image_content_type):
             model="gpt-4o-mini",
             instructions=(
                 "Ты извлекаешь данные с изображения дневника питания. Верни только JSON без markdown. "
-                "Схема: {date: YYYY-MM-DD или null, date_source: screenshot или today_fallback, "
-                "period_note: строка или null, meals: [{date: YYYY-MM-DD или null, name, meal_type, portion, foods:[], "
-                "calories, protein_g, fat_g, carbs_g, uncertainty}]}. "
+                "Текущая дата по Москве: " + _moscow_today() + ". "
+                "Схема: {date: YYYY-MM-DD или null, date_year_visible: true/false, date_source: screenshot/screenshot_no_year/today_fallback, "
+                "period_note: строка или null, meals: [{date: YYYY-MM-DD или null, date_year_visible: true/false, name, meal_type, portion, "
+                "foods:[{name, calories, protein_g, fat_g, carbs_g, uncertainty}], calories, protein_g, fat_g, carbs_g, uncertainty}]}. "
+                "КРИТИЧЕСКИ ВАЖНО: никогда не определяй БЖУ по привычному порядку столбцов. В разных приложениях порядок разный. "
+                "Каждое число связывай только с его подписью/заголовком рядом с ним: белки/Б/protein, жиры/Ж/fat, углеводы/У/carbs, калории/ккал/kcal. "
+                "Сначала найди подписи столбцов или строк, затем прочитай число в соответствующем столбце/строке. "
+                "Если подписи не видны или связь числа с подписью неоднозначна, верни null для сомнительного показателя и объясни это в uncertainty. "
+                "Не переставляй значения местами и не угадывай по типичному составу продукта. "
                 "Учитывай только реально видимые данные. Не вычисляй и не угадывай числа. "
-                "Если на скриншоте есть конкретная дата, используй её и date_source=screenshot. "
-                "Если даты нет или она неразборчива, date=null и date_source=today_fallback. "
-                "Разделяй отдельные приёмы пищи, если они видны. Если скриншот охватывает несколько дат, укажи дату отдельно у каждого приёма в поле date. "
-                "Не превращай общий итог дня в отдельный приём пищи. "
+                "Если на скриншоте видны день и месяц, но год не указан, date_year_visible=false и используй текущий год из даты по Москве, указанной выше. "
+                "Если год явно виден, date_year_visible=true. Если дата отсутствует или неразборчива, date=null и date_source=today_fallback. "
+                "Разделяй отдельные приёмы пищи, если они видны. Если скриншот охватывает несколько дат, укажи дату отдельно у каждого приёма. "
+                "В calories/protein_g/fat_g/carbs_g указывай ИТОГ приёма пищи только если он явно показан; foods содержит отдельные продукты и их собственные значения. "
+                "Не смешивай итоги приёма, итоги дня и отдельные продукты. Не превращай общий итог дня в отдельный приём пищи. "
                 "Если показан только итог за день без блюд, верни meals=[] и объясни это в period_note. "
                 "Числа возвращай числом, отсутствующие значения — null. Не добавляй сведения, которых нет на изображении."
             ),
@@ -1327,15 +1433,9 @@ async def begin_screenshot_import(message, image_bytes, image_content_type):
             max_output_tokens=1200,
         )
         data = _extract_json(response.output_text)
-        if not data.get("date"):
-            data["date"] = _moscow_today()
-            data["date_source"] = "today_fallback"
-        else:
-            # Validate ISO date before storing it.
-            data["date"] = date.fromisoformat(str(data["date"])).isoformat()
-            data["date_source"] = "screenshot"
         if not isinstance(data.get("meals"), list):
             data["meals"] = []
+        data = _normalize_import_dates(data)
         with db_connect() as conn:
             user = conn.execute("select id from public.app_user where telegram_id=%s", (telegram_user.id,)).fetchone()
             if user is None:
@@ -1428,9 +1528,10 @@ async def handle_pending_screenshot_message(message):
             instructions=(
                 "Обнови JSON распознавания дневника питания по исправлению пользователя. "
                 "Сохрани прежние данные, если пользователь их не меняет. Не придумывай факты. "
+                "Не меняй местами белки, жиры и углеводы: используй только семантические подписи показателей. "
                 "Если пользователь явно меняет дату, обнови date и date_source='user'. "
-                "Верни только JSON с теми же полями: date, date_source, period_note, meals. "
-                "В meals используй поля date, name, meal_type, portion, foods, calories, protein_g, fat_g, carbs_g, uncertainty."
+                "Верни только JSON с полями date, date_year_visible, date_source, period_note, meals. "
+                "В meals используй поля date, date_year_visible, name, meal_type, portion, foods:[{name, calories, protein_g, fat_g, carbs_g, uncertainty}], calories, protein_g, fat_g, carbs_g, uncertainty."
             ),
             input="Текущие данные: " + json.dumps(data, ensure_ascii=False) + "\nИсправление пользователя: " + text,
             max_output_tokens=1200,
@@ -1439,12 +1540,13 @@ async def handle_pending_screenshot_message(message):
         if not updated.get("date"):
             updated["date"] = data.get("date") or _moscow_today()
             updated["date_source"] = data.get("date_source", "today_fallback")
-        else:
-            updated["date"] = date.fromisoformat(str(updated["date"])).isoformat()
-            if updated.get("date_source") not in {"screenshot", "user"}:
-                updated["date_source"] = "user"
+            updated["date_year_visible"] = data.get("date_year_visible")
+        elif updated.get("date") != data.get("date"):
+            updated["date_source"] = "user"
+            updated["date_year_visible"] = True
         if not isinstance(updated.get("meals"), list):
             updated["meals"] = data.get("meals", [])
+        updated = _normalize_import_dates(updated)
         with db_connect() as conn:
             conn.execute("update public.nutrition_import_pending set extraction=%s, updated_at=now() where id=%s", (Jsonb(updated), pending["id"]))
         await message.answer(_render_import_preview(updated), parse_mode="Markdown")
