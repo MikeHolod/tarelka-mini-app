@@ -1252,6 +1252,41 @@ def _food_field(food, *names):
     return None
 
 
+def _missing_macro_foods(data):
+    """Return products with at least one unreadable/missing macro value."""
+    missing = []
+    labels = (("protein_g", "Б"), ("fat_g", "Ж"), ("carbs_g", "У"))
+    for meal in data.get("meals") or []:
+        if not isinstance(meal, dict):
+            continue
+        for food in meal.get("foods") or []:
+            if not isinstance(food, dict):
+                continue
+            absent = [label for key, label in labels if _food_field(food, key) is None]
+            if absent:
+                missing.append({
+                    "name": str(_food_field(food, "name", "title") or "Продукт без названия"),
+                    "missing": absent,
+                })
+    return missing
+
+
+def _recalculate_meal_macro_totals(data):
+    """Recalculate meal B/F/C totals only when every listed food has that value."""
+    for meal in data.get("meals") or []:
+        foods = meal.get("foods") or []
+        if not foods or not all(isinstance(food, dict) for food in foods):
+            continue
+        for key in ("protein_g", "fat_g", "carbs_g"):
+            values = [_food_field(food, key) for food in foods]
+            if all(value is not None for value in values):
+                try:
+                    meal[key] = round(sum(float(value) for value in values), 2)
+                except (TypeError, ValueError):
+                    pass
+    return data
+
+
 def _meal_food_totals(meal):
     foods = meal.get("foods") or []
     if not isinstance(foods, list) or not foods or not all(isinstance(item, dict) for item in foods):
@@ -1343,7 +1378,19 @@ def _render_import_preview(data):
             lines.append("   ⚠️ Не уверен: " + str(meal["uncertainty"]))
     if data.get("period_note"):
         lines.extend(["", str(data["period_note"])])
-    lines.extend(["", "Проверь дату, продукты и значения. Напиши, что исправить, или ответь **«Да»**, если всё верно. До подтверждения я ничего не сохраняю."])
+    missing = _missing_macro_foods(data)
+    if missing and not data.get("allow_missing_macros"):
+        lines.extend(["", "**Не вижу КБЖУ у некоторых продуктов:**"])
+        for item in missing:
+            lines.append(f"• {item['name']} — не хватает: {', '.join(item['missing'])}")
+        lines.extend([
+            "",
+            "Пришли отдельный скриншот с их пищевой ценностью или напиши значения текстом. Я добавлю их к соответствующим продуктам и пересчитаю показатели. Пока ничего не сохраняю."
+        ])
+    else:
+        if missing:
+            lines.extend(["", "ℹ️ Для некоторых продуктов КБЖУ так и не указаны — оставлю эти значения неизвестными."])
+        lines.extend(["", "Проверь дату, продукты и значения. Напиши, что исправить, или ответь **«Да»**, если всё верно. До подтверждения я ничего не сохраняю."])
     return "\n".join(lines)
 
 
@@ -1397,7 +1444,7 @@ def _get_pending_import(conn, telegram_id):
     ).fetchone()
 
 
-async def begin_screenshot_import(message, image_bytes, image_content_type):
+async def begin_screenshot_import(message, image_bytes, image_content_type, existing_pending=None):
     telegram_user = message.from_user
     if telegram_user is None:
         return
@@ -1424,38 +1471,64 @@ async def begin_screenshot_import(message, image_bytes, image_content_type):
                 "В calories/protein_g/fat_g/carbs_g указывай ИТОГ приёма пищи только если он явно показан; foods содержит отдельные продукты и их собственные значения. "
                 "Не смешивай итоги приёма, итоги дня и отдельные продукты. Не превращай общий итог дня в отдельный приём пищи. "
                 "Если показан только итог за день без блюд, верни meals=[] и объясни это в period_note. "
-                "Числа возвращай числом, отсутствующие значения — null. Не добавляй сведения, которых нет на изображении."
+                "Числа возвращай числом, отсутствующие значения — null. Не добавляй сведения, которых нет на изображении. "
+                + ("Пользователь прислал ДОПОЛНИТЕЛЬНЫЙ скриншот к уже распознанному дневнику. Текущие данные: " + json.dumps(existing_pending["extraction"], ensure_ascii=False) + ". Сохрани все существующие даты, приёмы пищи, продукты и значения. Из нового изображения извлеки только видимые показатели и добавь их к соответствующим уже существующим продуктам по названию. Не заменяй и не удаляй прежние записи. Если продукт нельзя однозначно сопоставить, не присоединяй значения наугад — опиши неопределённость. Верни полный обновлённый JSON прежней схемы. " if existing_pending else "")
             ),
             input=[{"role":"user","content":[
-                {"type":"input_text","text":"Извлеки дату, блюда, порции, калории и БЖУ с этого скриншота."},
+                {"type":"input_text","text":("Это дополнительный скриншот с КБЖУ к уже начатому импорту. Обнови существующие записи, не создавая новый приём пищи. " if existing_pending else "Извлеки дату, блюда, порции, калории и БЖУ с этого скриншота.")},
                 {"type":"input_image","image_url":f"data:{image_content_type};base64,{encoded}","detail":"auto"},
             ]}],
             max_output_tokens=1200,
         )
         data = _extract_json(response.output_text)
+        if existing_pending:
+            previous = existing_pending["extraction"]
+            had_missing_macros = bool(_missing_macro_foods(previous))
+            if not data.get("date"):
+                data["date"] = previous.get("date")
+                data["date_source"] = previous.get("date_source", "today_fallback")
+                data["date_year_visible"] = previous.get("date_year_visible")
+            if not isinstance(data.get("meals"), list) or not data.get("meals"):
+                data["meals"] = previous.get("meals", [])
+            if data.get("period_note") is None:
+                data["period_note"] = previous.get("period_note")
+            if previous.get("allow_missing_macros"):
+                data["allow_missing_macros"] = True
+        else:
+            had_missing_macros = False
         if not isinstance(data.get("meals"), list):
             data["meals"] = []
         data = _normalize_import_dates(data)
+        if had_missing_macros and not _missing_macro_foods(data):
+            data = _recalculate_meal_macro_totals(data)
         with db_connect() as conn:
             user = conn.execute("select id from public.app_user where telegram_id=%s", (telegram_user.id,)).fetchone()
             if user is None:
                 await message.answer("Сначала зарегистрируйся с помощью команды /start.")
                 return
-            conn.execute(
-                """update public.nutrition_import_pending set status='cancelled', updated_at=now()
-                   where telegram_id=%s and status='pending'""",
-                (telegram_user.id,),
-            )
-            conn.execute(
-                """insert into public.nutrition_import_pending
-                   (telegram_id, user_id, extraction, status, source_message_id, created_at, updated_at)
-                   values (%s,%s,%s,'pending',%s,now(),now())
-                   on conflict (telegram_id) do update set
-                     user_id=excluded.user_id, extraction=excluded.extraction,
-                     status='pending', source_message_id=excluded.source_message_id,
-                     created_at=now(), updated_at=now()""",
-                (telegram_user.id, user["id"], Jsonb(data), message.message_id),
-            )
+            if existing_pending:
+                conn.execute(
+                    """update public.nutrition_import_pending
+                       set extraction=%s, source_message_id=%s, updated_at=now()
+                       where id=%s and status='pending'""",
+                    (Jsonb(data), message.message_id, existing_pending["id"]),
+                )
+            else:
+                conn.execute(
+                    """update public.nutrition_import_pending set status='cancelled', updated_at=now()
+                       where telegram_id=%s and status='pending'""",
+                    (telegram_user.id,),
+                )
+                conn.execute(
+                    """insert into public.nutrition_import_pending
+                       (telegram_id, user_id, extraction, status, source_message_id, created_at, updated_at)
+                       values (%s,%s,%s,'pending',%s,now(),now())
+                       on conflict (telegram_id) do update set
+                         user_id=excluded.user_id, extraction=excluded.extraction,
+                         status='pending', source_message_id=excluded.source_message_id,
+                         created_at=now(), updated_at=now()""",
+                    (telegram_user.id, user["id"], Jsonb(data), message.message_id),
+                )
         await message.answer(_render_import_preview(data), parse_mode="Markdown")
     except Exception as exc:
         print(f"Screenshot extraction error: {type(exc).__name__}: {exc}", flush=True)
@@ -1478,12 +1551,21 @@ async def handle_pending_screenshot_message(message):
                 conn.execute("update public.nutrition_import_pending set status='cancelled', updated_at=now() where id=%s", (pending["id"],))
             await message.answer("Импорт скриншота отменён. В дневник ничего не добавлено.")
             return True
+        data = pending["extraction"]
+        if lowered in {"пропустить", "оставить без бжу", "не знаю", "оставить как есть"}:
+            data["allow_missing_macros"] = True
+            with db_connect() as conn:
+                conn.execute("update public.nutrition_import_pending set extraction=%s, updated_at=now() where id=%s", (Jsonb(data), pending["id"]))
+            await message.answer(_render_import_preview(data), parse_mode="Markdown")
+            return True
         confirmation = (
             lowered in {"да", "верно", "правильно", "всё верно", "все верно", "подтверждаю", "сохраняй", "да, всё верно", "да все верно"}
             or bool(re.fullmatch(r"да[!., ]*(всё|все)?[!., ]*(верно|правильно|так)?[!., ]*", lowered))
         )
         if confirmation:
-            data = pending["extraction"]
+            if _missing_macro_foods(data) and not data.get("allow_missing_macros"):
+                await message.answer("Сначала пришли КБЖУ для перечисленных продуктов отдельным скриншотом или текстом. Если этих данных нет, напиши «Пропустить» — я оставлю их неизвестными.")
+                return True
             meals = data.get("meals") or []
             if not meals:
                 await message.answer("На скриншоте не удалось выделить отдельные приёмы пищи. Нечего добавлять в дневник. Можешь прислать скриншот с деталями блюд.")
@@ -1522,6 +1604,7 @@ async def handle_pending_screenshot_message(message):
             return True
         # Treat any other text as a correction; ask the model to update the structured extraction.
         data = pending["extraction"]
+        had_missing_macros = bool(_missing_macro_foods(data))
         client = OpenAI(api_key=OPENAI_API_KEY)
         response = client.responses.create(
             model="gpt-4o-mini",
@@ -1547,6 +1630,8 @@ async def handle_pending_screenshot_message(message):
         if not isinstance(updated.get("meals"), list):
             updated["meals"] = data.get("meals", [])
         updated = _normalize_import_dates(updated)
+        if had_missing_macros and not _missing_macro_foods(updated):
+            updated = _recalculate_meal_macro_totals(updated)
         with db_connect() as conn:
             conn.execute("update public.nutrition_import_pending set extraction=%s, updated_at=now() where id=%s", (Jsonb(updated), pending["id"]))
         await message.answer(_render_import_preview(updated), parse_mode="Markdown")
@@ -1631,7 +1716,7 @@ async def process_bot_image(message: types.Message, state: FSMContext):
             "Определи тип изображения. Верни строго одно значение: "
             "MEAL_PHOTO — фотография готовой еды или продуктов; "
             "NUTRITION_SCREENSHOT — скриншот приложения учёта питания, "
-            "дневника еды, калорий или БЖУ; "
+            "дневника еды, таблицы или экрана с калориями/БЖУ, пищевой ценностью продукта; "
             "OTHER — всё остальное. Не объясняй ответ. "
             f"Подпись пользователя: {caption or 'нет'}"
         )
@@ -1663,7 +1748,10 @@ async def process_bot_image(message: types.Message, state: FSMContext):
             image_kind = "OTHER"
 
         if image_kind == "NUTRITION_SCREENSHOT":
-            await begin_screenshot_import(message, image_bytes, image_content_type)
+            existing_pending = None
+            with db_connect() as conn:
+                existing_pending = _get_pending_import(conn, message.from_user.id)
+            await begin_screenshot_import(message, image_bytes, image_content_type, existing_pending=existing_pending)
             return
 
         if image_kind != "MEAL_PHOTO":
